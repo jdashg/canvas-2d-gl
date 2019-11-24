@@ -1,0 +1,33 @@
+<html>
+<head>
+<meta charset='utf-8'/>
+<script src='gl-2d.js'></script>
+</head>
+<body>
+<canvas id='e_canvas'></canvas>
+<br/>
+<canvas id='e_canvas_gl'></canvas>
+<script>
+
+// -
+
+e_canvas_gl.style.border = '2px solid black';
+e_canvas.style.border = '2px solid green';
+
+//const c2d_gl = e_canvas_gl.getContext('gl-2d');
+const c2d_2d = e_canvas.getContext('2d');
+
+function draw(c2d) {
+  c2d.canvas.width = 150;
+  c2d.fillStyle = '#f0f';
+  c2d.fillRect(10, 20, 30, 40);
+  //c2d.clearRect(0, 40, 150, -10);
+
+  c2d.setTransform(1, .2, .8, 1, 0, 0);
+  c2d.fillRect(0, 0, 100, 100);
+}
+//draw(c2d_gl);
+draw(c2d_2d);
+</script>
+</body>
+</html>
