@@ -377,7 +377,7 @@ void main() {
    gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
 }`.trim();
-         const COLOR_VS = `
+         const COLOR_FS = `
 precision mediump float;
 
 uniform vec4 u_color;
@@ -385,7 +385,32 @@ uniform vec4 u_color;
 void main() {
     gl_FragColor = u_color;
 }`.trim();
-         this.rect_prog = linkProgramSources(gl, RECT_VS, COLOR_VS, ['a_box01', 'a_dest_rect']);
+         const LINE_VS = `
+attribute vec2 a_box01;
+attribute vec4 a_xy0xy1;
+uniform int u_line_cap;
+uniform float u_line_width;
+uniform mat3 u_transform;
+varying vec2 v_pos;
+
+void main() {
+   vec2 diff = a_xy0xy1.zw - a_xy0xy1.xy;
+   vec3 dir =
+   vec3 dest3 = u_transform * vec3(dest2, 1);
+   gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
+   gl_Position.y *= -1.0;
+}`.trim();
+         const LINE_FS = `
+precision mediump float;
+
+uniform int u_line_cap;
+uniform float u_line_width;
+uniform sampler2D u_tex;
+
+void main() {
+    gl_FragColor = u_color;
+}`.trim();
+         this.rect_prog = linkProgramSources(gl, RECT_VS, COLOR_FS, ['a_box01', 'a_dest_rect']);
 /*
          const LINE_VS = `
 attribute vec2 a_box01;
@@ -400,6 +425,10 @@ void main() {
 }`.trim();
          this.line_prog = linkProgramSources(gl, LINE_VS, COLOR_VS, ['a_box01', 'a_dest_rect']);
 */
+         // -
+
+         gl.disable(GL.DEPTH_TEST);
+
          // -
 
          const vao_ext = gl.getExtension('OES_vertex_array_object');
@@ -439,7 +468,7 @@ void main() {
          if (prog.last_transform === transform) return;
          prog.last_transform = transform;
          const mat3 = this._gl_transform(transform);
-         console.log('_ensure_prog_transform: mat3:', mat3);
+         //console.log('_ensure_prog_transform: mat3:', mat3);
          gl.uniformMatrix3fv(prog.u_transform, false, mat3);
       }
 
@@ -454,21 +483,21 @@ void main() {
          c2d.canvas.height = gl.canvas.height;
 
          c2d.globalAlpha = 1.0;
-         c2d.globalCompositeOperation = 'copy';
+         c2d.globalCompositeOperation = 'source-over';
 
-         gl.disable(GL.SCISSOR_TEST);
-         gl.disable(GL.DEPTH_TEST);
-         gl.clearColor(0, 0, 0, 0);
-         gl.clear(GL.COLOR_BUFFER_BIT);
+         this._clear_for_copy();
+
          gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
          this._state_stack = [];
          this._state = Object.assign({}, DRAW_STATE);
       }
 
-      _draw_quad() {
+      _clear_for_copy() {
          const gl = this.gl;
-         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+         gl.disable(GL.SCISSOR_TEST);
+         gl.clearColor(0, 0, 0, 0);
+         gl.clear(GL.COLOR_BUFFER_BIT);
       }
 
       // -
@@ -534,8 +563,6 @@ void main() {
          const ky = 1/this.canvas.height;
          const scale_mat = [[kx, 0],
                             [0, ky]];
-         console.log('scale_mat', JSON.stringify(scale_mat));
-         console.log('rows', JSON.stringify(rows));
          const scaled_rows = mat_mul(scale_mat, rows);
 
          const ret = new Float32Array(9);
@@ -640,8 +667,10 @@ void main() {
       _fill_rects(rect_floats, transform) {
          const fill_style = this.fillStyle;
          const color = parse_color(fill_style);
-         console.log('_fill_rects: color: ', color);
+         //console.log('_fill_rects: color: ', color);
          if (!color) throw new Error('Bad fill_style: ' + fill_style);
+
+         this._ensure_blend_op(this.globalCompositeOperation);
 
          const gl = this.gl;
          const prog = this.rect_prog;
@@ -676,7 +705,6 @@ void main() {
          }
          const buf = this._path_float_buf;
 
-
          const common_transform = cur_path[0].transform;
          let fast_rects = true;
          let float_pos = 0;
@@ -700,6 +728,12 @@ void main() {
 
       // -
 
+      stroke() {
+         console.log('stroke not yet implemented');
+      }
+
+      // -
+
       rect_to_gl(rect) {
          y = this.gl.canvas.height - y - h; // flip y
          return {x:x, y:y, w:w, h:h};
@@ -718,34 +752,98 @@ void main() {
          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
 */
 
+      _cur_blend_op = undefined;
+      _ensure_blend_op(blend_op) {
+         if (blend_op == 'copy') {
+            this._clear_for_copy();
+         }
+         if (blend_op === this._cur_blend_op) return;
+         this._cur_blend_op = blend_op;
 
-      /* globalCompositeOperation:
-         * source-over: blendEquation(ADD); blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
-         * source-in:
-            * C = Cs
-            * A = As*Ad
-            * blendEquation(ADD)
-            * blendFuncSep(ONE, ZERO, DST_ALPHA, ZERO);
-         * destination-out: blendEquation(REVERSE_SUBTRACT); blendFunc(SRC_ALPHA, ONE);
-         * destination-atop:
-            * C = Cd*Ad + Cs*(1-Ad)
-            * A = As
-            * blendEquation(ADD)
-            * blendFuncSep(ONE_MINUS_DST_ALPHA, DST_ALPHA, ONE, ZERO);
-         * lighter: blendFunc(ONE, ONE); blendEquation(ADD);
-       */
+         const gl = this.gl;
+         if (blend_op == 'source-over' ||
+             blend_op == 'copy') {
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            return;
+         }
+         if (blend_op == 'destination-out') {
+            gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+            return;
+         }
+
+         if (blend_op == 'source-in') {
+            // C = Cs
+            // A = As*Ad
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFuncSeparate(gl.ONE, gl.ZERO, gl.DST_ALPHA, gl.ZERO);
+            return;
+         }
+         if (blend_op == 'destination-atop') {
+            // C = Cd*Ad + Cs*(1-Ad)
+            // A = As
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFuncSeparate(gl.ONE_MINUS_DST_ALPHA, gl.DST_ALPHA, gl.ONE, gl.ZERO);
+            return;
+         }
+         if (blend_op == 'lighter') {
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFunc(gl.ONE, gl.ONE);
+            return;
+         }
+         console.log('Unhandled blend_op: ', blend_op);
+      }
+
+      // -
+
+      fillText(text, x, y, max_width) {
+         this._putText('fill', text, x, y, max_width);
+      }
+      strokeText(text, x, y, max_width) {
+         this._putText('stroke', text, x, y, max_width);
+      }
+
+      _putText(type, text, x, y, max_width) {
+         // Measure-text
+         // put (composite:copy) on intermediary (cached?) canvas
+         // this.drawImage
+      }
+
+      // -
 
       fillRect(x, y, w, h) {
-         this._fillRect(x, y, w, h, this._state.fillStyle, this._state.globalCompositeOperation);
+         this.save();
+         this.beginPath();
+         this.rect(x, y, w, h);
+         this.fill();
+         this.restore();
+      }
+
+      strokeRect(x, y, w, h) {
+         this.save();
+         this.beginPath();
+         this.rect(x, y, w, h);
+         this.stroke();
+         this.restore();
       }
 
       clearRect(x, y, w, h) {
-         this._fillRect(x, y, w, h, 'transparent', 'copy');
+         this.save();
+         this.fillStyle = 'white';
+         this.globalCompositeOperation = 'destination-out';
+         this.fillRect(x, y, w, h);
+         this.restore();
       }
-
+/*
       _fillRect(x, y, w, h, fill_style, blend_op) {
          const c2d = this.c2d;
          const gl = this.gl;
+
+         if (fill_style == 'copy') {
+            this._clear_for_copy();
+            fill_style = 'source-over';
+         }
 
          const rect = make_rect(arguments);
          const gl_rect = Object.assign({}, rect);
@@ -767,8 +865,7 @@ void main() {
 
             const TRIVIAL_COMPOSITES = [
                'source-over',
-               'copy',
-               'hard-light',
+               'copy', // copy is clear+source-over, aka terrible :/
             ];
             if (!TRIVIAL_COMPOSITES.includes(blend_op)) {
                console.log(`!TRIVIAL_COMPOSITES.includes(${blend_op})`);
@@ -844,14 +941,14 @@ void main() {
                                  norm_rect.w, norm_rect.h);
 
             prog.ensure_transform();
-            this._draw_quad();
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
             return;
          }
 
          console.log('fillRect non-color-fill not implemented');
          return;
       }
-
+*/
       getImageData(x, y, w, h) {
          const c2d = this.c2d;
          const gl = this.gl;
@@ -894,8 +991,9 @@ void main() {
       if (type == 'gl-2d') {
          attribs = attribs || {
             alpha: true,
-            depth: true,
-            stencil: true,
+            antialias: false,
+            depth: false,
+            stencil: false,
             preserveDrawingBuffer: true,
             premultipliedAlpha: false,
          };
