@@ -259,10 +259,10 @@
 
       const re_rgba = /rgba?[(](.+)[)]/;
       const re_sep = / *[, \/] */g;
-      const m = fill_style_str.match(re);
+      const m = fill_style_str.match(re_rgba);
       if (m) {
-         const rgba = m.groups[1];
-         const arr = rgba.trim().split(re_sep);
+         const rgba_str = m[1];
+         let arr = rgba_str.trim().split(re_sep);
          arr[3] = arr[3] || 1;
          arr = arr.map((x, i) => {
             if (x.endsWith('%')) {
@@ -366,18 +366,18 @@ void main() {
 
          // -
 
-         const FILL_VS = `
-attribute vec2 a_vert;
-uniform vec4 u_dest_rect;
+         const RECT_VS = `
+attribute vec2 a_box01;
+attribute vec4 a_dest_rect;
 uniform mat3 u_transform;
 
 void main() {
-   vec2 dest2 = u_dest_rect.xy + a_vert * u_dest_rect.zw;
+   vec2 dest2 = a_dest_rect.xy + a_box01 * a_dest_rect.zw;
    vec3 dest3 = u_transform * vec3(dest2, 1);
    gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
 }`.trim();
-         const FILL_FS = `
+         const COLOR_VS = `
 precision mediump float;
 
 uniform vec4 u_color;
@@ -385,16 +385,21 @@ uniform vec4 u_color;
 void main() {
     gl_FragColor = u_color;
 }`.trim();
-         this.fill_prog = linkProgramSources(gl, FILL_VS, FILL_FS, ['a_vert']);
+         this.rect_prog = linkProgramSources(gl, RECT_VS, COLOR_VS, ['a_box01', 'a_dest_rect']);
+/*
+         const LINE_VS = `
+attribute vec2 a_box01;
+attribute vec4 a_dest_rect;
+uniform mat3 u_transform;
 
-         let last_transform = DEFAULT_TRANSFORM;
-         this.fill_prog.ensure_transform = function() {
-            if (gl2d._state._transform == last_transform) return;
-            const mat3 = gl2d._gl_transform();
-            console.log('mat3', mat3);
-            gl.uniformMatrix3fv(this.u_transform, false, mat3);
-         };
-
+void main() {
+   vec2 dest2 = a_dest_rect.xy + a_box01 * a_dest_rect.zw;
+   vec3 dest3 = u_transform * vec3(dest2, 1);
+   gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
+   gl_Position.y *= -1.0;
+}`.trim();
+         this.line_prog = linkProgramSources(gl, LINE_VS, COLOR_VS, ['a_box01', 'a_dest_rect']);
+*/
          // -
 
          const vao_ext = gl.getExtension('OES_vertex_array_object');
@@ -414,10 +419,28 @@ void main() {
          gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertData), gl.STATIC_DRAW);
 
+         const instancing_ext = gl.getExtension('ANGLE_instanced_arrays');
+         gl.drawArraysInstanced = function(...args) {
+            instancing_ext.drawArraysInstancedANGLE(...args);
+         };
+
          gl.enableVertexAttribArray(0);
          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
+         gl.enableVertexAttribArray(1);
+         instancing_ext.vertexAttribDivisorANGLE(1, 1);
+
          //gl.bindVertexArray(null);
+      }
+
+      _ensure_prog_transform(prog, transform) {
+         const gl = this.gl;
+         if (transform === undefined) throw new Error('`transform` required.');
+         if (prog.last_transform === transform) return;
+         prog.last_transform = transform;
+         const mat3 = this._gl_transform(transform);
+         console.log('_ensure_prog_transform: mat3:', mat3);
+         gl.uniformMatrix3fv(prog.u_transform, false, mat3);
       }
 
       get canvas() {
@@ -500,21 +523,30 @@ void main() {
          return this._state._line_dash.slice();
       }
 
-      _gl_transform_mat3 = new Float32Array(9);
-      _gl_transform() {
-         let rows = this._state._transform;
+      _gl_transform(rows) {
+         if (rows === undefined) {
+            rows = this._state._transform;
+         }
          if (!rows) {
             rows = DEFAULT_TRANSFORM;
          }
-         const ret = this._gl_transform_mat3;
-         ret[0] = rows[0][0];
-         ret[1] = rows[1][0];
+         const kx = 1/this.canvas.width;
+         const ky = 1/this.canvas.height;
+         const scale_mat = [[kx, 0],
+                            [0, ky]];
+         console.log('scale_mat', JSON.stringify(scale_mat));
+         console.log('rows', JSON.stringify(rows));
+         const scaled_rows = mat_mul(scale_mat, rows);
+
+         const ret = new Float32Array(9);
+         ret[0] = scaled_rows[0][0];
+         ret[1] = scaled_rows[1][0];
          ret[2] = 0;
-         ret[3] = rows[0][1];
-         ret[4] = rows[1][1];
+         ret[3] = scaled_rows[0][1];
+         ret[4] = scaled_rows[1][1];
          ret[5] = 0;
-         ret[6] = rows[0][2];
-         ret[7] = rows[1][2];
+         ret[6] = scaled_rows[0][2];
+         ret[7] = scaled_rows[1][2];
          ret[8] = 1;
          return ret;
       }
@@ -539,6 +571,7 @@ void main() {
 
       // -
 
+
       beginPath() {
          this._state._path = [];
       }
@@ -550,6 +583,27 @@ void main() {
             transform: this._state._transform,
          });
       }
+
+      _path_replay() {
+         const c2d = this.c2d;
+         const cur_path = this._state._path;
+         let last_transform;
+         c2d.beginPath();
+         for (const call of cur_path) {
+            if (call.transform !== last_transform) {
+               last_transform = call.transform;
+               if (call.transform) {
+                  c2d.setTransform(last_transform[0], last_transform[1], last_transform[2],
+                                   last_transform[3], last_transform[4], last_transform[5]);
+               } else {
+                  c2d.setTransform(1, 0, 0, 1, 0, 0);
+               }
+            }
+            c2d[call.func].apply(c2d, call.args);
+         }
+      }
+
+      // -
 
       arc() {
          this._path_add('arc', arguments);
@@ -577,6 +631,71 @@ void main() {
       }
       rect() {
          this._path_add('rect', arguments);
+      }
+
+      // -
+
+      _path_float_buf = new Float32Array(0);
+
+      _fill_rects(rect_floats, transform) {
+         const fill_style = this.fillStyle;
+         const color = parse_color(fill_style);
+         console.log('_fill_rects: color: ', color);
+         if (!color) throw new Error('Bad fill_style: ' + fill_style);
+
+         const gl = this.gl;
+         const prog = this.rect_prog;
+         gl.useProgram(prog);
+         this._ensure_prog_transform(prog, transform);
+
+         gl.disable(gl.BLEND); // todo
+         gl.uniform4f(prog.u_color, color[0],
+                                    color[1],
+                                    color[2],
+                                    color[3]);
+
+         const vbo = gl.createBuffer();
+         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+         gl.bufferData(gl.ARRAY_BUFFER, rect_floats, gl.STREAM_DRAW);
+         gl.enableVertexAttribArray(1);
+         gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+         const quad_count = rect_floats.length / 4;
+         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, quad_count);
+         gl.deleteBuffer(vbo);
+      }
+
+      fill() {
+         const cur_path = this._state._path;
+
+         const float_count = cur_path.length*4;
+         if (!float_count) return; // Ok, sure!
+
+         if (this._path_float_buf.length < float_count) {
+            this._path_float_buf = new Float32Array(float_count);
+         }
+         const buf = this._path_float_buf;
+
+
+         const common_transform = cur_path[0].transform;
+         let fast_rects = true;
+         let float_pos = 0;
+         for (const cur of cur_path) {
+            fast_rects &= (cur.func === 'rect' &&
+                           cur.transform === common_transform);
+            if (!fast_rects) {
+               console.log("Can't fast-path: " + JSON.stringify(cur));
+               break;
+            }
+            buf[float_pos+0] = cur.args[0];
+            buf[float_pos+1] = cur.args[1];
+            buf[float_pos+2] = cur.args[2];
+            buf[float_pos+3] = cur.args[3];
+            float_pos += 4;
+         }
+         if (!fast_rects) return;
+
+         this._fill_rects(buf.subarray(0, float_count), common_transform);
       }
 
       // -
@@ -720,8 +839,9 @@ void main() {
             const norm_rect = Object.assign({}, rect);
             scale_rect(norm_rect, 1.0 / gl.canvas.width, 1.0 / gl.canvas.height);
             console.log('norm_rect', norm_rect);
-            gl.uniform4f(prog.u_dest_rect, norm_rect.x, norm_rect.y,
-                                           norm_rect.w, norm_rect.h);
+            gl.disableVertexAttribArray(1);
+            gl.vertexAttrib4f(1, norm_rect.x, norm_rect.y,
+                                 norm_rect.w, norm_rect.h);
 
             prog.ensure_transform();
             this._draw_quad();
@@ -777,7 +897,7 @@ void main() {
             depth: true,
             stencil: true,
             preserveDrawingBuffer: true,
-            premultipliedAlpha: true,
+            premultipliedAlpha: false,
          };
          const gl_canvas = this;
          const gl = orig_get_context.call(gl_canvas, 'webgl', attribs);

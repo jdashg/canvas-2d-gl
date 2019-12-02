@@ -14,7 +14,7 @@
 e_canvas_gl.style.border = '2px solid black';
 e_canvas.style.border = '2px solid green';
 
-//const c2d_gl = e_canvas_gl.getContext('gl-2d');
+const c2d_gl = e_canvas_gl.getContext('gl-2d');
 const c2d_2d = e_canvas.getContext('2d');
 
 function draw(c2d) {
@@ -23,10 +23,26 @@ function draw(c2d) {
   c2d.fillRect(10, 20, 30, 40);
   //c2d.clearRect(0, 40, 150, -10);
 
-  c2d.setTransform(1, .2, .8, 1, 0, 0);
-  c2d.fillRect(0, 0, 100, 100);
+  //c2d.setTransform(1, .2, .8, 1, 0, 0);
+  //c2d.fillRect(0, 0, 100, 100);
+
+//         ["$14","set globalAlpha",[1]],
+//         ["$14","translate",[0.5,0.5]],
+//         ["$14","set fillStyle",["\"rgba(239, 83, 80, 0.5)"]],
+//         ["$14","set strokeStyle",["\"rgba(239, 83, 80, 0.5)"]],
+//         ["$14","set lineWidth",[1]],
+//         ["$14","beginPath",[]],
+//         ["$14","rect",[-4,718,5,33]],
+  c2d.globalAlpha = 1;
+  c2d.translate(0.5, 0.5);
+  c2d.fillStyle = "rgba(239, 83, 80, 0.5)";
+  c2d.strokeStyle = "rgba(239, 83, 80, 0.5)";
+  c2d.lineWidth = 1;
+  c2d.beginPath();
+  c2d.rect(0, 50, 50, 50);
+  c2d.fill();
 }
-//draw(c2d_gl);
+draw(c2d_gl);
 draw(c2d_2d);
 </script>
 </body>
