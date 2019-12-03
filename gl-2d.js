@@ -388,46 +388,87 @@ void main() {
          const LINE_VS = `
 attribute vec2 a_box01;
 attribute vec4 a_xy0xy1;
-uniform int u_line_cap;
-uniform float u_line_width;
+uniform mediump vec4 u_line_info;
 uniform mat3 u_transform;
-varying vec2 v_pos;
+varying vec2 v_line_coord;
+varying float v_line_height;
 
 void main() {
-   vec2 diff = a_xy0xy1.zw - a_xy0xy1.xy;
-   vec3 dir =
-   vec3 dest3 = u_transform * vec3(dest2, 1);
-   gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
+   float u_line_width = u_line_info.x;
+   int u_line_cap = int(u_line_info.y);
+
+   float half_w_len = u_line_width / 2.0;
+
+   vec2 r = a_xy0xy1.xy;
+   vec2 s = a_xy0xy1.zw;
+   vec2 h = s - r;
+   float h_len = length(h);
+   vec2 h_dir = h / h_len;
+   vec2 w_dir = cross(vec3(h_dir, 0), vec3(0, 0, 1)).xy;
+   vec2 w = w_dir * u_line_width;
+
+   float cap_len = 0.0;
+   if (u_line_cap != 0) {
+      cap_len = half_w_len;
+   }
+   float capped_h_len = h_len + 2.0 * cap_len;
+   r -= w / 2.0;
+
+   // Col-major: [ w.x , cap_h.x, r.x ]
+   //            [ w.y , cap_h.y, r.y ]
+   mat3 xy_from_wh = mat3(vec3(w, 0), vec3(h_dir*capped_h_len, 0), vec3(r, 1));
+
+   vec3 xy_pos = xy_from_wh * vec3(a_box01, 1);
+
+   xy_pos = u_transform * xy_pos;
+   gl_Position = vec4(xy_pos.xy * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
+
+   v_line_coord = vec2(-half_w_len, -cap_len) + a_box01 * vec2(u_line_width, capped_h_len);
+   v_line_height = h_len;
 }`.trim();
          const LINE_FS = `
 precision mediump float;
 
-uniform int u_line_cap;
-uniform float u_line_width;
-uniform sampler2D u_tex;
+uniform vec4 u_color;
+uniform sampler2D u_dash_tex;
+uniform vec4 u_line_info;
+
+varying vec2 v_line_coord;
+varying float v_line_height;
 
 void main() {
-    gl_FragColor = u_color;
+   float u_line_width = u_line_info.x;
+   int u_line_cap = int(u_line_info.y);
+   float u_dash_length = u_line_info.z;
+   float u_dash_offset = u_line_info.w;
+
+   gl_FragColor = u_color;
+
+   if (v_line_coord.y < 0.0 || v_line_coord.y > v_line_height) {
+      vec2 tip = vec2(0, v_line_height * step(0.0, v_line_coord.y));
+      float dist = 0.0;
+      if (u_line_cap == 1) { // round
+         dist = distance(tip, v_line_coord) / (u_line_width / 2.0) ; // round
+      } else if (u_line_cap == 2) { // square
+         vec2 diff = abs(tip - v_line_coord);
+         dist = (diff.x + diff.y) / u_line_width;
+      }
+      if (dist > 1.0) discard;
+      return; // No dash effect on caps.
+   }
+   float dash_coord = (v_line_coord.y + u_dash_offset) / u_dash_length;
+   dash_coord = mod(dash_coord, 1.0); // repeat
+   float dash_value = texture2D(u_dash_tex, vec2(dash_coord, 0)).r;
+   gl_FragColor *= dash_value;
 }`.trim();
          this.rect_prog = linkProgramSources(gl, RECT_VS, COLOR_FS, ['a_box01', 'a_dest_rect']);
-/*
-         const LINE_VS = `
-attribute vec2 a_box01;
-attribute vec4 a_dest_rect;
-uniform mat3 u_transform;
+         this.line_prog = linkProgramSources(gl, LINE_VS, LINE_FS, ['a_box01', 'a_xy0xy1']);
 
-void main() {
-   vec2 dest2 = a_dest_rect.xy + a_box01 * a_dest_rect.zw;
-   vec3 dest3 = u_transform * vec3(dest2, 1);
-   gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
-   gl_Position.y *= -1.0;
-}`.trim();
-         this.line_prog = linkProgramSources(gl, LINE_VS, COLOR_VS, ['a_box01', 'a_dest_rect']);
-*/
          // -
 
          gl.disable(GL.DEPTH_TEST);
+         gl.enable(GL.BLEND);
 
          // -
 
@@ -598,9 +639,8 @@ void main() {
 
       // -
 
-
       beginPath() {
-         this._state._path = [];
+         const path = this._state._path = [];
       }
 
       _path_add(func, args) {
@@ -662,82 +702,228 @@ void main() {
 
       // -
 
-      _path_float_buf = new Float32Array(0);
+      _path_float_buf = new Float32Array(1000);
 
-      _fill_rects(rect_floats, transform) {
-         const fill_style = this.fillStyle;
-         const color = parse_color(fill_style);
-         //console.log('_fill_rects: color: ', color);
-         if (!color) throw new Error('Bad fill_style: ' + fill_style);
+      _path_float_buf_push(arr) {
+         let buf = this._path_float_buf;
+         const pos = buf.pos;
+         const end = pos + arr.length;
+         if (end > buf.length) {
+            const old = buf;
+            buf = this._path_float_buf = new Float32Array(old.length * 2);
+            buf.set(old);
+         }
+         buf.set(arr, pos);
+         buf.pos = end;
+      }
 
-         this._ensure_blend_op(this.globalCompositeOperation);
+      // -
+
+      fill() {
+         if (this._fill_fast()) return;
+      }
+      stroke() {
+         if (this._stroke_fast()) return;
+      }
+
+      // -
+
+      _fill_fast() {
+         const cur_path = this._state._path;
+         if (!cur_path.length) return true; // Ok, sure!
+
+         this._path_float_buf.pos = 0;
+
+         const common_transform = cur_path[0].transform;
+         for (const cur of cur_path) {
+            if (cur.transform !== common_transform) {
+               console.log(`Can't fast-path with dynamic transform.`);
+               return false;
+            }
+
+            if (cur.func === 'rect') {
+               if (cur.args.length != 4) throw new Error(`Arg count must be 4: ${cur.args}`);
+               this._path_float_buf_push(cur.args);
+               continue;
+            }
+
+            console.log(`Can't fast-path ${cur.func}().`);
+            return false;
+         }
+         const buf_end = this._path_float_buf.pos;
+         const sub_buf = this._path_float_buf.subarray(0, buf_end);
+
+         // -
 
          const gl = this.gl;
          const prog = this.rect_prog;
          gl.useProgram(prog);
-         this._ensure_prog_transform(prog, transform);
+         this._ensure_prog_transform(prog, common_transform);
+         this._ensure_blend_op(this.globalCompositeOperation);
 
-         gl.disable(gl.BLEND); // todo
-         gl.uniform4f(prog.u_color, color[0],
-                                    color[1],
-                                    color[2],
-                                    color[3]);
+         const style = this.fillStyle;
+         const color = parse_color(style);
+         //console.log('_fill_rects: color: ', color);
+         if (!color) throw new Error('Bad fillStyle: ' + style);
+         gl.uniform4fv(prog.u_color, color);
 
          const vbo = gl.createBuffer();
          gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-         gl.bufferData(gl.ARRAY_BUFFER, rect_floats, gl.STREAM_DRAW);
+         gl.bufferData(gl.ARRAY_BUFFER, sub_buf, gl.STREAM_DRAW);
          gl.enableVertexAttribArray(1);
          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
 
-         const quad_count = rect_floats.length / 4;
+         const quad_count = sub_buf.length / 4;
          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, quad_count);
          gl.deleteBuffer(vbo);
       }
 
-      fill() {
-         const cur_path = this._state._path;
+      // -
 
-         const float_count = cur_path.length*4;
-         if (!float_count) return; // Ok, sure!
+      _cached_tex_by_line_dash = {}
 
-         if (this._path_float_buf.length < float_count) {
-            this._path_float_buf = new Float32Array(float_count);
+      _tex_by_line_dash() {
+         const gl = this.gl;
+
+         const arr = this.getLineDash();
+         const key = arr.join(',');
+
+         let tex = this._cached_tex_by_line_dash[key];
+         if (!tex) {
+            tex = this._cached_tex_by_line_dash[key] = create_nomip_texture(gl);
+            let bytes;
+            if (arr.length) {
+               let dash_length = 0;
+               for (const sublen of arr) {
+                  dash_length += sublen;
+               }
+               bytes = new Uint8Array(dash_length);
+               let pos = 0;
+               let fill_val = ~0;
+               for (const sublen of arr) {
+                  const end = pos + sublen;
+                  bytes.fill(fill_val, pos, end);
+                  pos = end;
+                  fill_val = ~fill_val;
+               }
+            } else {
+               bytes = new Uint8Array([0xff]);
+            }
+            tex.dash_length = bytes.length;
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, tex.dash_length, 1, 0,
+                          gl.LUMINANCE, gl.UNSIGNED_BYTE, bytes);
          }
-         const buf = this._path_float_buf;
+         return tex;
+      }
+
+      _LINE_CAP_MODE_BY_STR = {
+         'butt': 0,
+         'round': 1,
+         'square': 2,
+      };
+
+      _stroke_fast() {
+         const cur_path = this._state._path;
+         if (!cur_path.length) return; // Ok, sure!
+
+         this._path_float_buf.pos = 0;
 
          const common_transform = cur_path[0].transform;
-         let fast_rects = true;
-         let float_pos = 0;
-         for (const cur of cur_path) {
-            fast_rects &= (cur.func === 'rect' &&
-                           cur.transform === common_transform);
-            if (!fast_rects) {
-               console.log("Can't fast-path: " + JSON.stringify(cur));
-               break;
-            }
-            buf[float_pos+0] = cur.args[0];
-            buf[float_pos+1] = cur.args[1];
-            buf[float_pos+2] = cur.args[2];
-            buf[float_pos+3] = cur.args[3];
-            float_pos += 4;
+         let fast = true;
+         const path_pos = {
+            x: 0,
+            y: 0,
+         };
+
+         let needs_join = false;
+         function move_to(x, y) {
+            path_pos.x = x;
+            path_pos.y = y;
+            needs_join = false;
          }
-         if (!fast_rects) return;
 
-         this._fill_rects(buf.subarray(0, float_count), common_transform);
+         const root = this;
+         function line_to(x, y) {
+            if (needs_join) {
+               const both_round = (root.lineCap == "round" && root.lineJoin == "round");
+               if (!both_round) {
+                  console.log(`Joined lines must be lineCap:"round", lineJoin:"round".`);
+                  return false;
+               }
+            }
+            root._path_float_buf_push([path_pos.x, path_pos.y, x, y]);
+            needs_join = true;
+            return true;
+         }
+
+         for (const cur of cur_path) {
+            if (cur.transform !== common_transform) {
+               console.log(`Can't fast-path with dynamic transform.`);
+               return false;
+            }
+
+            if (cur.func === 'moveTo') {
+               move_to(cur.args[0], cur.args[1]);
+               continue;
+            }
+            if (cur.func === 'lineTo') {
+               if (!line_to(cur.args[0], cur.args[1])) return false;
+               continue;
+            }
+            if (cur.func === 'rect') {
+               const [x, y, w, h] = cur.args;
+               move_to(x, y);
+               if (!line_to(x+w, y) ||
+                   !line_to(x+w, y+h) ||
+                   !line_to(x, y+h) ||
+                   !line_to(x, y)) {
+                  return false;
+               }
+               continue;
+            }
+
+            console.log(`Can't fast-path ${cur.func}().`);
+            return false;
+         }
+
+         const buf_end = this._path_float_buf.pos;
+         const sub_buf = this._path_float_buf.subarray(0, buf_end);
+
+         // -
+
+         const gl = this.gl;
+         const prog = this.line_prog;
+         gl.useProgram(prog);
+         this._ensure_prog_transform(prog, common_transform);
+         this._ensure_blend_op(this.globalCompositeOperation);
+
+         const dash_tex = this._tex_by_line_dash();
+         gl.bindTexture(gl.TEXTURE_2D, dash_tex);
+
+         const line_cap_mode = this._LINE_CAP_MODE_BY_STR[this.lineCap];
+         if (line_cap_mode === 'undefined') throw new Error(`Bad lineCap: ${this.lineCap}`);
+
+         gl.uniform4f(prog.u_line_info, this.lineWidth, line_cap_mode,
+                      dash_tex.dash_length, this.lineDashOffset);
+
+         const style = this.strokeStyle;
+         const color = parse_color(style);
+         //console.log('_fill_rects: color: ', color);
+         if (!color) throw new Error('Bad strokeStyle: ' + style);
+         gl.uniform4fv(prog.u_color, color);
+
+         const vbo = gl.createBuffer();
+         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+         gl.bufferData(gl.ARRAY_BUFFER, sub_buf, gl.STREAM_DRAW);
+         gl.enableVertexAttribArray(1);
+         gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+         const quad_count = sub_buf.length / 4;
+         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, quad_count);
+         gl.deleteBuffer(vbo);
       }
 
       // -
-
-      stroke() {
-         console.log('stroke not yet implemented');
-      }
-
-      // -
-
-      rect_to_gl(rect) {
-         y = this.gl.canvas.height - y - h; // flip y
-         return {x:x, y:y, w:w, h:h};
-      }
 /*
       createPattern(image, repetition) {
          repetition = repetition || 'repeat';
@@ -751,8 +937,10 @@ void main() {
          if (repetition == 'no-repeat') {
          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
 */
+      // -
 
       _cur_blend_op = undefined;
+
       _ensure_blend_op(blend_op) {
          if (blend_op == 'copy') {
             this._clear_for_copy();
@@ -805,6 +993,7 @@ void main() {
       }
 
       _putText(type, text, x, y, max_width) {
+         console.log('fillText/strokeText not yet implemented.');
          // Measure-text
          // put (composite:copy) on intermediary (cached?) canvas
          // this.drawImage
@@ -991,7 +1180,7 @@ void main() {
       if (type == 'gl-2d') {
          attribs = attribs || {
             alpha: true,
-            antialias: false,
+            antialias: true,
             depth: false,
             stencil: false,
             preserveDrawingBuffer: true,
