@@ -434,18 +434,18 @@ void main() {
    float h_len = length(h);
    vec2 h_dir = h / h_len;
    vec2 w_dir = cross(vec3(h_dir, 0), vec3(0, 0, 1)).xy;
-   vec2 w = w_dir * u_line_width;
 
    float cap_len = 0.0;
    if (u_line_cap != 0) {
       cap_len = half_w_len;
    }
    float capped_h_len = h_len + 2.0 * cap_len;
-   r -= w / 2.0;
+   r -= w_dir * half_w_len;
+   r -= h_dir * cap_len;
 
    // Col-major: [ w.x , cap_h.x, r.x ]
    //            [ w.y , cap_h.y, r.y ]
-   mat3 xy_from_wh = mat3(vec3(w, 0), vec3(h_dir*capped_h_len, 0), vec3(r, 1));
+   mat3 xy_from_wh = mat3(vec3(w_dir*u_line_width, 0), vec3(h_dir*capped_h_len, 0), vec3(r, 1));
 
    vec3 xy_pos = xy_from_wh * vec3(a_box01, 1);
 
@@ -474,17 +474,14 @@ void main() {
 
    gl_FragColor = u_color;
 
-   if (v_line_coord.y < 0.0 || v_line_coord.y > v_line_height) {
-      vec2 tip = vec2(0, v_line_height * step(0.0, v_line_coord.y));
-      float dist = 0.0;
-      if (u_line_cap == 1) { // round
-         dist = distance(tip, v_line_coord) / (u_line_width / 2.0) ; // round
-      } else if (u_line_cap == 2) { // square
-         vec2 diff = abs(tip - v_line_coord);
-         dist = (diff.x + diff.y) / u_line_width;
+   if (u_line_cap == 1) { // round
+      if (v_line_coord.y < 0.0 || v_line_coord.y > v_line_height) {
+         vec2 tip = vec2(0, v_line_height * step(0.0, v_line_coord.y));
+         float dist_from_edge = u_line_width / 2.0 - distance(tip, v_line_coord);
+         if (dist_from_edge < 0.0) discard;
+         float fade = min(1.0, dist_from_edge);
+         gl_FragColor *= fade;
       }
-      if (dist > 1.0) discard;
-      return; // No dash effect on caps.
    }
    float dash_coord = (v_line_coord.y + u_dash_offset) / u_dash_length;
    dash_coord = mod(dash_coord, 1.0); // repeat

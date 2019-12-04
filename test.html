@@ -42,9 +42,19 @@ function draw(c2d) {
   console.log(c2d.fillStyle);
   c2d.strokeStyle = "rgba(239, 83, 80, 0.5)";
   c2d.lineWidth = 1;
+  c2d.canvas.width = c2d.canvas.width;
   c2d.beginPath();
-  c2d.rect(0, 50, 100, 50);
+  c2d.rect(0, 0, 30, 30);
+  c2d.rect(120, 0, 30, 30);
   c2d.fill();
+  c2d.beginPath();
+  c2d.moveTo(30, 30);
+  c2d.lineTo(120, 30);
+  c2d.lineWidth = 20;
+  c2d.lineCap = 'square';
+  c2d.lineCap = 'round';
+  c2d.setLineDash([40,40]);
+  c2d.stroke();
 }
 draw(c2d_2d);
 draw(c2d_gl);
