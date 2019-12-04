@@ -1,12 +1,13 @@
 <html>
 <head>
 <meta charset='utf-8'/>
+<script src='../canvas-rr/rr-record.js'></script>
 <script src='gl-2d.js'></script>
 </head>
 <body>
-<canvas id='e_canvas'></canvas>
+<canvas id='e_canvas'></canvas>e_canvas
 <br/>
-<canvas id='e_canvas_gl'></canvas>
+<canvas id='e_canvas_gl'></canvas>e_canvas_gl
 <script>
 
 // -
@@ -14,8 +15,8 @@
 e_canvas_gl.style.border = '2px solid black';
 e_canvas.style.border = '2px solid green';
 
-const c2d_gl = e_canvas_gl.getContext('gl-2d');
 const c2d_2d = e_canvas.getContext('2d');
+const c2d_gl = e_canvas_gl.getContext('gl-2d');
 
 function draw(c2d) {
   c2d.canvas.width = 150;
@@ -35,15 +36,18 @@ function draw(c2d) {
 //         ["$14","rect",[-4,718,5,33]],
   c2d.globalAlpha = 1;
   c2d.translate(0.5, 0.5);
-  c2d.fillStyle = "rgba(239, 83, 80, 0.5)";
+  c2d.fillStyle = "rgba(200, 83, 80, 0.5)";
+  //c2d.fillStyle = "rgba(200, 83, 80, 1.0)";
+  //c2d.fillStyle = 'orange';
+  console.log(c2d.fillStyle);
   c2d.strokeStyle = "rgba(239, 83, 80, 0.5)";
   c2d.lineWidth = 1;
   c2d.beginPath();
-  c2d.rect(0, 50, 50, 50);
+  c2d.rect(0, 50, 100, 50);
   c2d.fill();
 }
-draw(c2d_gl);
 draw(c2d_2d);
+draw(c2d_gl);
 </script>
 </body>
 </html>

@@ -108,7 +108,7 @@
    }
 
    // -
-
+   /*
    function hook_prop(obj, prop_name, override_desc) {
       const proto = Object.getPrototypeOf(obj);
       const proto_prop_desc = Object.getOwnPropertyDescriptor(proto, prop_name);
@@ -128,6 +128,50 @@
       }
       Object.defineProperty(obj, prop_name, prop_desc);
    }
+   */
+   // -
+
+   function hook_prop(obj, k, fn_observe, fn_override) {
+      const desc = Object.getOwnPropertyDescriptor(obj, k);
+
+      function hook(desc_key, k_name) {
+         //console.log(`hook_prop: ${obj.constructor.name}.${k_name}`);
+         const was = desc[desc_key];
+         if (!was) return;
+         desc[desc_key] = function() {
+            if (fn_override) {
+               const boxed_result = fn_override(this, k_name, was, arguments);
+               if (boxed_result) return boxed_result[0];
+            }
+
+            const ret = was.apply(this, arguments);
+            if (fn_observe) {
+               fn_observe(this, k_name, arguments, ret);
+            }
+            return ret;
+         };
+      }
+
+      hook('get', 'get ' + k);
+      hook('set', 'set ' + k);
+      if (typeof desc.value === 'function') {
+         hook('value', k);
+      }
+
+      Object.defineProperty(obj, k, desc);
+   }
+
+   function on_width_height(obj, k, args, ret) {
+      if (args.length != 1) return;
+      const context = obj._gl2d_context;
+      if (!context) return;
+      if (!context._reset) return;
+      context._reset();
+   }
+   hook_prop(HTMLCanvasElement.prototype, 'width', on_width_height);
+   hook_prop(HTMLCanvasElement.prototype, 'height', on_width_height);
+
+   // -
 
    function make_rect(x_or_arr, y, w, h) {
       let x = x_or_arr;
@@ -229,53 +273,49 @@
       return prog;
    }
 
+   function parse_color(style_str) {
+      const arr = (function() {
+         if (style_str[0] == '#') {
+            const str = style_str.substring(1);
+            const per_channel = (str.length <= 4) ? 1 : 2;
+            const color = [0,0,0,0].map((x, i) => {
+               let part = str.substring(per_channel*i, per_channel*(i+1));
+               if (!part.length) {
+                  part = 'f';
+               }
+               if (part.length == 1) {
+                  part = part + part;
+               }
+               const ret = parseInt(part, 16);
+               return ret / 255.0;
+            });
+            return color;
+         }
 
-   const COLOR_BY_NAME = {
-      transparent: [0, 0, 0, 0],
-      black: [0, 0, 0, 1],
-      white: [1, 1, 1, 1],
-   };
+         const re_rgba = /rgba?[(](.+)[)]/;
+         const re_sep = / *[, \/] */g;
+         const m = style_str.match(re_rgba);
+         if (m) {
+            const rgba_str = m[1];
+            let arr = rgba_str.trim().split(re_sep);
+            arr[3] = arr[3] || 1;
+            arr = arr.map((x, i) => {
+               if (x.endsWith('%')) {
+                  x = x.substring(0, x.length-1);
+                  return x / 100.0;
+               }
+               const scale = (i == 3 ? 1 : 255);
+               return x / scale;
+            });
+            return arr;
+         }
 
-   function parse_color(fill_style_str) {
-      let color = COLOR_BY_NAME[fill_style_str];
-      if (color) return color;
-
-      if (fill_style_str[0] == '#') {
-         const str = fill_style_str.substring(1);
-         const per_channel = (str.length <= 4) ? 1 : 2;
-         const color = [0,0,0,0].map((x, i) => {
-            let part = str.substring(per_channel*i, per_channel*(i+1));
-            if (!part.length) {
-               part = 'f';
-            }
-            if (part.length == 1) {
-               part = part + part;
-            }
-            const ret = parseInt(part, 16);
-            return ret / 255.0;
-         });
-         return color;
-      }
-
-      const re_rgba = /rgba?[(](.+)[)]/;
-      const re_sep = / *[, \/] */g;
-      const m = fill_style_str.match(re_rgba);
-      if (m) {
-         const rgba_str = m[1];
-         let arr = rgba_str.trim().split(re_sep);
-         arr[3] = arr[3] || 1;
-         arr = arr.map((x, i) => {
-            if (x.endsWith('%')) {
-               x = x.substring(0, x.length-1);
-               return x / 100.0;
-            }
-            const scale = (i == 3 ? 1 : 255);
-            return x / scale;
-         });
-         return arr;
-      }
-
-      return null;
+         return null;
+      })();
+      arr[0] *= arr[3];
+      arr[1] *= arr[3];
+      arr[2] *= arr[3];
+      return arr;
    }
 
    const DRAW_STATE = {
@@ -298,7 +338,6 @@
       textBaseline            : 'alphabetic',
       _transform              : null,
       _line_dash              : [],
-      _path                   : [],
    };
 
    const DEFAULT_TRANSFORM = mat_ident(2, 3);
@@ -315,26 +354,16 @@
 
          const gl2d = this;
 
-         hook_prop(gl.canvas, 'width', {
-            set: function(x, orig_fn) {
-               orig_fn.call(gl.canvas, x);
-               gl2d._reset();
-            }
-         });
-         hook_prop(gl.canvas, 'height', {
-            set: function(x, orig_fn) {
-               orig_fn.call(gl.canvas, x);
-               gl2d._reset();
-            }
-         });
-
          for (const k in DRAW_STATE) {
             if (k[0] == '_')
                continue;
             Object.defineProperty(this, k, {
                enumerable: true,
                get: function() { return gl2d._state[k]; },
-               set: function(val) { gl2d._state[k] = val; },
+               set: function(val) {
+                  c2d[k] = val;
+                  gl2d._state[k] = c2d[k];
+               },
             });
          }
 
@@ -523,12 +552,9 @@ void main() {
          c2d.canvas.width = gl.canvas.width;
          c2d.canvas.height = gl.canvas.height;
 
-         c2d.globalAlpha = 1.0;
-         c2d.globalCompositeOperation = 'source-over';
+         gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
          this._clear_for_copy();
-
-         gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
          this._state_stack = [];
          this._state = Object.assign({}, DRAW_STATE);
@@ -546,7 +572,6 @@ void main() {
       save() {
          this._state_stack.push(this._state);
          this._state = Object.assign({}, this._state);
-         this._state._path = this._state._path.slice();
       }
 
       restore() {
@@ -568,6 +593,16 @@ void main() {
          this._state._transform = mat_mul(cur, m);
       }
 
+      getTransform() {
+         let cur = this._state._transform;
+         if (!cur) {
+            cur = mat_ident(2, 3);
+         }
+         return new DOMMatrix([cur[0][0], cur[0][1], 0, cur[0][2],
+                               cur[1][0], cur[1][1], 0, cur[1][2],
+                               0, 0, 1, 0,
+                               0, 0, 0, 1]);
+      }
       setTransform(a, b, c, d, e, f) {
          this._state._transform = null;
          this.transform(a, b, c, d, e, f);
@@ -639,35 +674,18 @@ void main() {
 
       // -
 
+      _default_path = [];
+
       beginPath() {
-         const path = this._state._path = [];
+         this._default_path = [];
       }
 
       _path_add(func, args) {
-         this._state._path.push({
+         this._default_path.push({
             func: func,
             args: [].slice.call(args),
             transform: this._state._transform,
          });
-      }
-
-      _path_replay() {
-         const c2d = this.c2d;
-         const cur_path = this._state._path;
-         let last_transform;
-         c2d.beginPath();
-         for (const call of cur_path) {
-            if (call.transform !== last_transform) {
-               last_transform = call.transform;
-               if (call.transform) {
-                  c2d.setTransform(last_transform[0], last_transform[1], last_transform[2],
-                                   last_transform[3], last_transform[4], last_transform[5]);
-               } else {
-                  c2d.setTransform(1, 0, 0, 1, 0, 0);
-               }
-            }
-            c2d[call.func].apply(c2d, call.args);
-         }
       }
 
       // -
@@ -729,7 +747,7 @@ void main() {
       // -
 
       _fill_fast() {
-         const cur_path = this._state._path;
+         const cur_path = this._default_path;
          if (!cur_path.length) return true; // Ok, sure!
 
          this._path_float_buf.pos = 0;
@@ -761,10 +779,9 @@ void main() {
          this._ensure_prog_transform(prog, common_transform);
          this._ensure_blend_op(this.globalCompositeOperation);
 
-         const style = this.fillStyle;
-         const color = parse_color(style);
+         const color = parse_color(this.fillStyle);
          //console.log('_fill_rects: color: ', color);
-         if (!color) throw new Error('Bad fillStyle: ' + style);
+         if (!color) throw new Error('Bad fillStyle: ' + this.fillStyle);
          gl.uniform4fv(prog.u_color, color);
 
          const vbo = gl.createBuffer();
@@ -823,7 +840,7 @@ void main() {
       };
 
       _stroke_fast() {
-         const cur_path = this._state._path;
+         const cur_path = this._default_path;
          if (!cur_path.length) return; // Ok, sure!
 
          this._path_float_buf.pos = 0;
@@ -843,11 +860,14 @@ void main() {
          }
 
          const root = this;
-         function line_to(x, y) {
+         function line_to(x, y, right_angles) {
             if (needs_join) {
-               const both_round = (root.lineCap == "round" && root.lineJoin == "round");
-               if (!both_round) {
-                  console.log(`Joined lines must be lineCap:"round", lineJoin:"round".`);
+               let can_join = (root.lineCap == "round" && root.lineJoin == "round");
+               if (right_angles) {
+                  can_join |= root.lineJoin == 'miter';
+               }
+               if (!can_join) {
+                  console.log(`Can't join lines with lineCap:'${root.lineCap}', lineJoin:${root.lineJoin}'.`);
                   return false;
                }
             }
@@ -873,10 +893,10 @@ void main() {
             if (cur.func === 'rect') {
                const [x, y, w, h] = cur.args;
                move_to(x, y);
-               if (!line_to(x+w, y) ||
-                   !line_to(x+w, y+h) ||
-                   !line_to(x, y+h) ||
-                   !line_to(x, y)) {
+               if (!line_to(x+w, y, true) ||
+                   !line_to(x+w, y+h, true) ||
+                   !line_to(x, y+h, true) ||
+                   !line_to(x, y, true)) {
                   return false;
                }
                continue;
@@ -906,10 +926,9 @@ void main() {
          gl.uniform4f(prog.u_line_info, this.lineWidth, line_cap_mode,
                       dash_tex.dash_length, this.lineDashOffset);
 
-         const style = this.strokeStyle;
-         const color = parse_color(style);
+         const color = parse_color(this.strokeStyle);
          //console.log('_fill_rects: color: ', color);
-         if (!color) throw new Error('Bad strokeStyle: ' + style);
+         if (!color) throw new Error('Bad strokeStyle: ' + this.strokeStyle);
          gl.uniform4fv(prog.u_color, color);
 
          const vbo = gl.createBuffer();
@@ -952,12 +971,13 @@ void main() {
          if (blend_op == 'source-over' ||
              blend_op == 'copy') {
             gl.blendEquation(gl.FUNC_ADD);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            //gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
             return;
          }
          if (blend_op == 'destination-out') {
             gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+            gl.blendFunc(gl.ONE, gl.ONE);
             return;
          }
 
@@ -1002,19 +1022,19 @@ void main() {
       // -
 
       fillRect(x, y, w, h) {
-         this.save();
+         const cur_path = this._default_path;
          this.beginPath();
          this.rect(x, y, w, h);
          this.fill();
-         this.restore();
+         this._default_path = cur_path;
       }
 
       strokeRect(x, y, w, h) {
-         this.save();
+         const cur_path = this._default_path;
          this.beginPath();
          this.rect(x, y, w, h);
          this.stroke();
-         this.restore();
+         this._default_path = cur_path;
       }
 
       clearRect(x, y, w, h) {
@@ -1177,6 +1197,7 @@ void main() {
 
    const orig_get_context = HTMLCanvasElement.prototype.getContext;
    HTMLCanvasElement.prototype.getContext = function(type, attribs) {
+      let ret = null;
       if (type == 'gl-2d') {
          attribs = attribs || {
             alpha: true,
@@ -1184,15 +1205,19 @@ void main() {
             depth: false,
             stencil: false,
             preserveDrawingBuffer: true,
-            premultipliedAlpha: false,
+            premultipliedAlpha: true,
          };
          const gl_canvas = this;
          const gl = orig_get_context.call(gl_canvas, 'webgl', attribs);
          if (!gl)
             return null;
 
-         return new CanvasRenderingContextGL2D(gl);
+         ret = new CanvasRenderingContextGL2D(gl);
       }
-      return orig_get_context.apply(this, arguments);
+      if (!ret) {
+         ret = orig_get_context.apply(this, arguments);
+      }
+      this._gl2d_context = ret;
+      return ret;
    };
 })();
