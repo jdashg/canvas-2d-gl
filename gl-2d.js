@@ -472,21 +472,25 @@ void main() {
    float u_dash_length = u_line_info.z;
    float u_dash_offset = u_line_info.w;
 
-   gl_FragColor = u_color;
-
-   if (u_line_cap == 1) { // round
-      if (v_line_coord.y < 0.0 || v_line_coord.y > v_line_height) {
-         vec2 tip = vec2(0, v_line_height * step(0.0, v_line_coord.y));
-         float dist_from_edge = u_line_width / 2.0 - distance(tip, v_line_coord);
-         if (dist_from_edge < 0.0) discard;
-         float fade = min(1.0, dist_from_edge);
-         gl_FragColor *= fade;
-      }
-   }
    float dash_coord = (v_line_coord.y + u_dash_offset) / u_dash_length;
    dash_coord = mod(dash_coord, 1.0); // repeat
-   float dash_value = texture2D(u_dash_tex, vec2(dash_coord, 0)).r;
-   gl_FragColor *= dash_value;
+   float dash_dist_to_solid = texture2D(u_dash_tex, vec2(dash_coord, 0)).r * 255.0;
+
+   float h_dist_to_solid = max(0.0 - v_line_coord.y, v_line_coord.y - v_line_height);
+   h_dist_to_solid = max(h_dist_to_solid, dash_dist_to_solid);
+
+   float dist_to_solid = h_dist_to_solid;
+   float half_line_width = u_line_width/2.0;
+   if (u_line_cap == 1) { // round
+      dist_to_solid = length(vec2(v_line_coord.x, dist_to_solid));
+      dist_to_solid = max(0.0, dist_to_solid - half_line_width);
+   } else if (u_line_cap == 2) { // square
+      dist_to_solid = max(0.0, dist_to_solid - half_line_width);
+   }
+
+   float solidness = max(0.0, 1.0 - dist_to_solid);
+   if (solidness <= 0.0) discard;
+   gl_FragColor = u_color * solidness;
 }`.trim();
          this.rect_prog = linkProgramSources(gl, RECT_VS, COLOR_FS, ['a_box01', 'a_dest_rect']);
          this.line_prog = linkProgramSources(gl, LINE_VS, LINE_FS, ['a_box01', 'a_xy0xy1']);
@@ -813,16 +817,26 @@ void main() {
                }
                bytes = new Uint8Array(dash_length);
                let pos = 0;
-               let fill_val = ~0;
+               let pen_down = true;
                for (const sublen of arr) {
                   const end = pos + sublen;
-                  bytes.fill(fill_val, pos, end);
-                  pos = end;
-                  fill_val = ~fill_val;
+                  if (pen_down) {
+                     bytes.fill(0, pos, end);
+                     pos = end;
+                  } else {
+                     const last_solid_pos = pos-1;
+                     const next_solid_pos = end;
+                     for (; pos < end; ++pos) {
+                        const dist = Math.min(pos - last_solid_pos, next_solid_pos - pos);
+                        bytes[pos] = dist;
+                     }
+                  }
+                  pen_down = !pen_down;
                }
             } else {
-               bytes = new Uint8Array([0xff]);
+               bytes = new Uint8Array([0]);
             }
+            //console.log(`_tex_by_line_dash: [${arr}] => [${bytes}]`);
             tex.dash_length = bytes.length;
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, tex.dash_length, 1, 0,
                           gl.LUMINANCE, gl.UNSIGNED_BYTE, bytes);

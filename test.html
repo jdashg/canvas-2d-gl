@@ -20,6 +20,7 @@ const c2d_gl = e_canvas_gl.getContext('gl-2d');
 
 function draw(c2d) {
   c2d.canvas.width = 150;
+  c2d.canvas.height = 20;
   c2d.fillStyle = '#f0f';
   c2d.fillRect(10, 20, 30, 40);
   //c2d.clearRect(0, 40, 150, -10);
@@ -46,14 +47,15 @@ function draw(c2d) {
   c2d.beginPath();
   c2d.rect(0, 0, 30, 30);
   c2d.rect(120, 0, 30, 30);
-  c2d.fill();
+  //c2d.fill();
   c2d.beginPath();
-  c2d.moveTo(30, 30);
-  c2d.lineTo(120, 30);
-  c2d.lineWidth = 20;
+  c2d.moveTo(30, 10);
+  c2d.lineTo(120, 10);
+  c2d.lineWidth = 10;
   c2d.lineCap = 'square';
   c2d.lineCap = 'round';
-  c2d.setLineDash([40,40]);
+  c2d.setLineDash([21,21]);
+  c2d.setLineDash([1,20]);
   c2d.stroke();
 }
 draw(c2d_2d);
