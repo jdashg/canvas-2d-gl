@@ -876,6 +876,7 @@ void main() {
                let can_join = (root.lineCap == "round" && root.lineJoin == "round");
                if (right_angles) {
                   can_join |= root.lineJoin == 'miter';
+                  // Todo implement miter&&right_angles as lineCap:square.
                }
                if (!can_join) {
                   console.log(`Can't join lines with lineCap:'${root.lineCap}', lineJoin:${root.lineJoin}'.`);
@@ -883,6 +884,8 @@ void main() {
                }
             }
             root._path_float_buf_push([path_pos.x, path_pos.y, x, y]);
+            path_pos.x = x;
+            path_pos.y = y;
             needs_join = true;
             return true;
          }
