@@ -61,9 +61,19 @@ function draw(c2d) {
     //c2d.setLineDash([1,20]);
     //c2d.stroke();
   }
-  //c2d.textBaseline = 'top';
-  c2d.textBaseline = 'middle';
-  c2d.fillText('KangarooM', 0, 0);
+  if (0) {
+    //c2d.textBaseline = 'top';
+    c2d.textBaseline = 'middle';
+    c2d.fillText('KangarooM', 0, 0);
+  }
+
+  if (1) {
+    c2d.beginPath();
+    c2d.rect(0, 0, 50, 50);
+    c2d.rect(25, 25, 50, 50);
+    c2d.fillStyle = '#9099';
+    c2d.fill();
+  }
 }
 draw(c2d_2d);
 draw(c2d_gl);

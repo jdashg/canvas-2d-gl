@@ -832,7 +832,13 @@ void main() {
          gl.uniform4f(prog.u_src_rect, 0, 0, 1, 1);
          gl.bindTexture(GL.TEXTURE_2D, this._white_tex);
 
+         gl.clear(gl.DEPTH_BUFFER_BIT);
+         gl.enable(gl.DEPTH_TEST);
+
          this._draw_rects(sub_buf);
+
+         gl.clear(gl.DEPTH_BUFFER_BIT);
+         gl.disable(gl.DEPTH_TEST);
       }
 
       _draw_rects(rect_view) {
@@ -999,7 +1005,13 @@ void main() {
          if (!color) throw new Error('Bad strokeStyle: ' + this.strokeStyle);
          gl.uniform4fv(prog.u_color, color);
 
+         gl.clear(gl.DEPTH_BUFFER_BIT);
+         gl.enable(gl.DEPTH_TEST);
+
          this._draw_rects(sub_buf);
+
+         gl.clear(gl.DEPTH_BUFFER_BIT);
+         gl.disable(gl.DEPTH_TEST);
       }
 
       // -
@@ -1356,8 +1368,8 @@ void main() {
          attribs = attribs || {
             alpha: true,
             antialias: true,
-            depth: false,
-            stencil: false,
+            depth: true,
+            stencil: true,
             preserveDrawingBuffer: true,
             premultipliedAlpha: true,
          };
