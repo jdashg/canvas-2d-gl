@@ -357,7 +357,7 @@
          c2d_canvas.width = gl.canvas.width;
          c2d_canvas.height = gl.canvas.height;
          const c2d = c2d_canvas.getContext('2d');
-         document.body.appendChild(c2d_canvas);
+         //document.body.appendChild(c2d_canvas);
 
          this.gl = gl;
          this.c2d = c2d;

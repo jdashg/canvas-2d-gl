@@ -13,6 +13,7 @@ Status: <span id='e_status'>-</span>
 <hr/>
 <button onclick='reset_button()'>Reset</button>
 <button onclick='play_button()'>Play</button>
+<button onclick='loop_button()'>Loop</button>
 <hr/>
 <div id='e_sandbox'></div>
 <script>
@@ -51,7 +52,10 @@ function remove_all_children(elem) {
    }
 }
 
+let NEXT_LOOP_FRAME = undefined;
+
 function reset_button() {
+   NEXT_LOOP_FRAME = undefined;
    remove_all_children(e_sandbox);
 
    const elem_map = RECORDING.make_elems();
@@ -74,6 +78,70 @@ function play_button() {
    reset_button();
    RECORDING.play(RECORDING.elem_map, 0);
 }
+
+// -
+
+(function() {
+   if (window.setImmediate) return;
+
+   let next_id = 1;
+   let func_by_id = {};
+   const KEY = 'window.setImmediate';
+   function handler(e) {
+      if (e.data !== KEY) return;
+      e.stopImmediatePropagation();
+
+      for (const func of Object.values(func_by_id)) {
+         (async function() {
+            func();
+         })();
+      }
+      func_by_id = {};
+   }
+   window.addEventListener('message', handler, true);
+
+   window.setImmediate = function(func) {
+      const id = next_id;
+      next_id += 1;
+      func_by_id[id] = func;
+      window.postMessage(KEY, '*');
+      return id;
+   };
+
+   window.clearImmediate = function(id) {
+      func_by_id[id] = undefined;
+   };
+})();
+
+function next_event_loop() {
+   return new Promise((res, rej) => {
+      setImmediate(() => {
+         res();
+      });
+   });
+}
+
+// -
+
+function loop_button() {
+   reset_button();
+   NEXT_LOOP_FRAME = 0;
+}
+
+async function on_raf() {
+   await next_event_loop();
+   requestAnimationFrame(on_raf);
+   if (NEXT_LOOP_FRAME === undefined) return;
+
+   // -
+
+   const frame = NEXT_LOOP_FRAME;
+   NEXT_LOOP_FRAME += 1;
+   NEXT_LOOP_FRAME %= RECORDING.frames.length;
+
+   RECORDING.play(RECORDING.elem_map, frame, frame+1);
+}
+on_raf();
 
 </script>
    </body>
