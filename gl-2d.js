@@ -1245,8 +1245,8 @@ void main() {
 
       drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh) {
          const gl = this.gl;
-         const src_w = src.width || src.naturalWidth;
-         const src_h = src.height || src.naturalHeight;
+         const src_w = src.naturalWidth || src.videoWidth || src.width;
+         const src_h = src.naturalHeight || src.videoHeight || src.height;
 
          if (dx === undefined) {
             dx = sx;
@@ -1274,14 +1274,22 @@ void main() {
             tex = this._tex_cache[src_id] = create_nomip_texture(gl);
             should_update = true;
          } else {
-            let is_static = false; // Video/Canvas
-            if (src instanceof HTMLImageElement) {
-               is_static = true;
+            let is_static = src._is_static;
+            if (is_static === undefined) {
+               is_static = false; // Video/Canvas
+               if (src instanceof HTMLImageElement) {
+                  src.addEventListener('load', e => {
+                     src._is_static = undefined;
+                  }, false);
 
-               const src_url = src.currentSrc || src.src;
-               if (src.currentSrc.endsWith('.gif')) {
-                  is_static = false;
+                  is_static = true;
+
+                  const src_url = src.currentSrc || src.src;
+                  if (src.currentSrc.endsWith('.gif')) {
+                     is_static = false;
+                  }
                }
+               src._is_static = is_static;
             }
             should_update = !is_static;
          }

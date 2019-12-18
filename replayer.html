@@ -2,7 +2,6 @@
    <head>
       <meta charset='UTF-8'>
       <script src='../canvas-rr/rr-replay.js'></script>
-      <script src='rr-replay.js'></script>
       <script src='gl-2d.js'></script>
    </head>
    <body>
@@ -67,7 +66,8 @@ async function load_from_json(slog, json) {
 
 // -
 
-const PRELOAD_RECORDING = 'recording(43).gl.json';
+let PRELOAD_RECORDING = 'recording(43).gl.json';
+PRELOAD_RECORDING = 'recording(43).json';
 
 (async function() {
    const slog = new SplitLogger('preload');
