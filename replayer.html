@@ -2,6 +2,7 @@
    <head>
       <meta charset='UTF-8'>
       <script src='../canvas-rr/rr-replay.js'></script>
+      <script src='rr-replay.js'></script>
       <script src='gl-2d.js'></script>
    </head>
    <body>
@@ -20,31 +21,71 @@ Status: <span id='e_status'>-</span>
 
 let RECORDING = null;
 
-async function file_input_changed(blob) {
-   const start = performance.now();
-   let last_split = start;
+class SplitLogger {
+   prefix = ''
 
-   function log_split(text) {
-      let split = performance.now();
-      const split_diff = split - last_split;
-      const total_diff = split - start;
-      console.log(`[${split_diff|0}/${total_diff|0}ms]`, text);
+   constructor(desc) {
+      if (desc) {
+         this.prefix = desc + ' '
+      }
+      this.start = performance.now();
+      this.last_split = this.start;
    }
+
+   log(text) {
+      let now = performance.now();
+      const split_diff = now - this.last_split;
+      const total_diff = now - this.start;
+      console.log(`[${this.prefix}${split_diff|0}/${total_diff|0}ms]`, text);
+      this.last_split = now;
+   }
+};
+
+// -
+
+async function file_input_changed(blob) {
+   const slog = new SplitLogger('file_input_changed');
 
    e_status.textContent = 'Reading...';
    const text = await blob.text();
-   log_split(`Read ${text.length} bytes.`);
+   slog.log(`Read ${text.length} bytes.`);
 
    e_status.textContent = 'Parsing...';
    const json = JSON.parse(text);
-   log_split('Parsed.');
+   slog.log('Parsed.');
 
+   await load_from_json(slog, json);
+}
+
+async function load_from_json(slog, json) {
    e_status.textContent = 'Loading...';
    RECORDING = await Recording.from_json(json);
-   log_split(`Loaded ${RECORDING.frames.length} frames.`);
+   slog.log(`Loaded ${RECORDING.frames.length} frames.`);
 
    e_status.textContent = 'Ready.';
 }
+
+// -
+
+const PRELOAD_RECORDING = 'recording(43).gl.json';
+
+(async function() {
+   const slog = new SplitLogger('preload');
+
+   const url = PRELOAD_RECORDING;
+
+   e_status.textContent = `Fetching ${url} for preload...`;
+   const resp = await fetch(url);
+   slog.log('Fetched.');
+
+   e_status.textContent = `Reading and parsing json...`;
+   const json = await resp.json();
+   slog.log('Parsed.');
+
+   await load_from_json(slog, json);
+})();
+
+// -----------------------
 
 function remove_all_children(elem) {
    while (elem.firstChild) {
@@ -128,9 +169,45 @@ function loop_button() {
    NEXT_LOOP_FRAME = 0;
 }
 
+const e_overlay = document.createElement('div');
+e_overlay.style.position = 'fixed';
+e_overlay.style.zIndex = 1;
+e_overlay.style.top = '1em';
+e_overlay.style.right = '1em';
+document.body.appendChild(e_overlay);
+
+const RAF_INTERVALS = [0];
+const CPU_INTERVALS = [0];
+
+function wrap_push(arr, val, max) {
+   const pos = arr.next || 0;
+   arr.next = (pos + 1) % max;
+   arr[pos] = val;
+}
+
+function stats(arr) {
+   const sorted = arr.slice().sort((a, b) => a - b);
+   return {
+      min: sorted[0],
+      med: sorted[sorted.length >> 1],
+      max: sorted[sorted.length-1],
+   };
+}
+
+let last_raf;
 async function on_raf() {
    await next_event_loop();
    requestAnimationFrame(on_raf);
+
+   const start = performance.now();
+   if (last_raf) {
+      const diff = start - last_raf;
+      wrap_push(RAF_INTERVALS, diff, 60);
+   }
+   last_raf = start;
+
+   e_overlay.textContent = `raf: ${JSON.stringify(stats(RAF_INTERVALS))}
+cpu: ${JSON.stringify(stats(CPU_INTERVALS))}`;
    if (NEXT_LOOP_FRAME === undefined) return;
 
    // -
@@ -138,8 +215,10 @@ async function on_raf() {
    const frame = NEXT_LOOP_FRAME;
    NEXT_LOOP_FRAME += 1;
    NEXT_LOOP_FRAME %= RECORDING.frames.length;
-
    RECORDING.play(RECORDING.elem_map, frame, frame+1);
+
+   const diff = performance.now() - start;
+   wrap_push(CPU_INTERVALS, diff, 60);
 }
 on_raf();
 

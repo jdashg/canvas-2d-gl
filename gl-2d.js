@@ -1073,15 +1073,11 @@ void main() {
          this._put_text('stroke', text, x, y, max_width);
       }
 
-      _put_text_cache = {};
-
-      _RE_NEWLINES = /\n/g;
-
-      _put_text(type, text, x, y, max_width) {
-         console.log(`_put_text(${[].slice.call(arguments)})`);
+      _make_text(type, text, x, y, max_width) {
+         //console.log(`_put_text(${[].slice.call(arguments)})`);
          const c2d = this.c2d;
          const gl = this.gl;
-         console.log(`_put_text: font: ${c2d.font}`);
+         //console.log(`_put_text: font: ${c2d.font}`);
 
          // -
          // Measure-text
@@ -1089,7 +1085,6 @@ void main() {
          c2d.font = this.font;
          c2d.textAlign = this.textAlign;
          c2d.textBaseline = this.textBaseline;
-         console.log(c2d.textBaseline, this.textBaseline);
          const meas = c2d.measureText(text);
 
          // first: align:left, baseline:middle
@@ -1115,7 +1110,7 @@ void main() {
             meas.actualBoundingBoxDescent = height - meas.actualBoundingBoxAscent;
          }
          meas.height = meas.actualBoundingBoxAscent + meas.actualBoundingBoxDescent;
-         console.log('meas', meas);
+         //console.log('meas', meas);
 
          // -
          // put (composite:copy) on intermediary (cached?) canvas
@@ -1140,7 +1135,20 @@ void main() {
          // -
          // this.drawImage
          //const image = make_gl_image(this.gl, c2d.canvas, 0, meas.actualBoundingBoxAscent);
+         const tex = create_nomip_texture(gl);
 
+         gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+         gl.texImage2D(GL.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c2d.canvas);
+         gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+
+         tex.width = meas.width;
+         tex.height = meas.height;
+         tex.y_offset = meas.actualBoundingBoxAscent;
+         return tex;
+      }
+
+      _put_text(type, text, x, y, max_width) {
+         const c2d = this.c2d;
          let key = {
             font: c2d.font,
             textAlign: c2d.textAlign,
@@ -1150,23 +1158,13 @@ void main() {
             text: text,
          };
          key = JSON.stringify(key);
-         console.log('key', key);
+         //console.log('key', key);
 
-         let tex;// = this._tex_cache[key];
+         let tex = this._tex_cache[key];
          let should_update = false;
          if (!tex) {
-            tex = this._tex_cache[key] = create_nomip_texture(gl);
-
-            gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-            gl.texImage2D(GL.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c2d.canvas);
-            gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-
-            tex.width = meas.width;
-            tex.height = meas.height;
-            tex.y_offset = meas.actualBoundingBoxAscent;
+            tex = this._tex_cache[key] = this._make_text(...arguments);
          }
-
-         // -
 
          const d_rect = {
             x: x,
@@ -1174,7 +1172,7 @@ void main() {
             w: tex.width,
             h: tex.height,
          };
-         console.log(d_rect);
+         //console.log(d_rect);
 
          // -
 
