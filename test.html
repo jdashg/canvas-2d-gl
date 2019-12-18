@@ -35,30 +35,35 @@ function draw(c2d) {
 //         ["$14","set lineWidth",[1]],
 //         ["$14","beginPath",[]],
 //         ["$14","rect",[-4,718,5,33]],
-  c2d.globalAlpha = 1;
-  c2d.translate(0.5, 0.5);
-  c2d.fillStyle = "rgba(200, 83, 80, 0.5)";
-  //c2d.fillStyle = "rgba(200, 83, 80, 1.0)";
-  c2d.fillStyle = 'orange';
-  console.log(c2d.fillStyle);
-  c2d.strokeStyle = "rgba(239, 83, 80, 0.5)";
-  c2d.lineWidth = 1;
-  c2d.canvas.width = c2d.canvas.width;
-  c2d.beginPath();
-  c2d.fillStyle = 'orange';
-  c2d.rect(1, 1, 30, 30);
-  c2d.rect(119, 1, 30, 30);
-  c2d.fill();
-  c2d.stroke();
-  //c2d.beginPath();
-  //c2d.moveTo(30, 10);
-  //c2d.lineTo(120, 10);
-  //c2d.lineWidth = 10;
-  //c2d.lineCap = 'square';
-  //c2d.lineCap = 'round';
-  //c2d.setLineDash([21,21]);
-  //c2d.setLineDash([1,20]);
-  //c2d.stroke();
+  if (0) {
+    c2d.globalAlpha = 1;
+    c2d.translate(0.5, 0.5);
+    c2d.fillStyle = "rgba(200, 83, 80, 0.5)";
+    //c2d.fillStyle = "rgba(200, 83, 80, 1.0)";
+    c2d.fillStyle = 'orange';
+    console.log(c2d.fillStyle);
+    c2d.strokeStyle = "rgba(239, 83, 80, 0.5)";
+    c2d.lineWidth = 1;
+    c2d.canvas.width = c2d.canvas.width;
+    c2d.beginPath();
+    c2d.fillStyle = 'orange';
+    c2d.rect(1, 1, 30, 30);
+    c2d.rect(119, 1, 30, 30);
+    c2d.fill();
+    c2d.stroke();
+    //c2d.beginPath();
+    //c2d.moveTo(30, 10);
+    //c2d.lineTo(120, 10);
+    //c2d.lineWidth = 10;
+    //c2d.lineCap = 'square';
+    //c2d.lineCap = 'round';
+    //c2d.setLineDash([21,21]);
+    //c2d.setLineDash([1,20]);
+    //c2d.stroke();
+  }
+  //c2d.textBaseline = 'top';
+  c2d.textBaseline = 'middle';
+  c2d.fillText('KangarooM', 0, 0);
 }
 draw(c2d_2d);
 draw(c2d_gl);

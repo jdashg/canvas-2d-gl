@@ -108,6 +108,15 @@
    }
 
    // -
+
+   function create_c2d(w, h) {
+      const elem = document.createElement('canvas');
+      elem.width = w;
+      elem.height = h;
+      return elem.getContext('2d');
+   }
+
+   // -
    /*
    function hook_prop(obj, prop_name, override_desc) {
       const proto = Object.getPrototypeOf(obj);
@@ -310,7 +319,7 @@
             return arr;
          }
 
-         return null;
+         throw new Error('Bad style_str: ' + style_str);
       })();
       arr[0] *= arr[3];
       arr[1] *= arr[3];
@@ -348,6 +357,7 @@
          c2d_canvas.width = gl.canvas.width;
          c2d_canvas.height = gl.canvas.height;
          const c2d = c2d_canvas.getContext('2d');
+         document.body.appendChild(c2d_canvas);
 
          this.gl = gl;
          this.c2d = c2d;
@@ -361,8 +371,9 @@
                enumerable: true,
                get: function() { return gl2d._state[k]; },
                set: function(val) {
-                  c2d[k] = val;
-                  gl2d._state[k] = c2d[k];
+                  //c2d[k] = val;
+                  //console.log(`${k}: ${val} => ${c2d[k]}`);
+                  gl2d._state[k] = val;
                },
             });
          }
@@ -399,20 +410,29 @@ void main() {
 attribute vec2 a_box01;
 attribute vec4 a_dest_rect;
 uniform mat3 u_transform;
+uniform vec4 u_src_rect;
+varying vec2 v_tex_coord;
 
 void main() {
    vec2 dest2 = a_dest_rect.xy + a_box01 * a_dest_rect.zw;
    vec3 dest3 = u_transform * vec3(dest2, 1);
    gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
+
+   v_tex_coord = u_src_rect.xy + a_box01 * u_src_rect.zw;
 }`.trim();
-         const COLOR_FS = `
+         const TEX_FS = `
 precision mediump float;
 
+uniform sampler2D u_sampler;
 uniform vec4 u_color;
+varying vec2 v_tex_coord;
 
 void main() {
-    gl_FragColor = u_color;
+    gl_FragColor = texture2D(u_sampler, v_tex_coord);
+    gl_FragColor *= u_color;
+    //gl_FragColor.rg = (gl_FragColor.rg + v_tex_coord) / 2.0;
+    //gl_FragColor.a = 1.0;
 }`.trim();
          const LINE_VS = `
 attribute vec2 a_box01;
@@ -492,8 +512,12 @@ void main() {
    if (solidness <= 0.0) discard;
    gl_FragColor = u_color * solidness;
 }`.trim();
-         this.rect_prog = linkProgramSources(gl, RECT_VS, COLOR_FS, ['a_box01', 'a_dest_rect']);
+         this.rect_prog = linkProgramSources(gl, RECT_VS, TEX_FS, ['a_box01', 'a_dest_rect']);
          this.line_prog = linkProgramSources(gl, LINE_VS, LINE_FS, ['a_box01', 'a_xy0xy1']);
+
+         this._white_tex = create_nomip_texture(gl);
+         gl.texImage2D(GL.TEXTURE_2D, 0, GL.RGBA, 1, 1, 0, GL.RGBA, GL.UNSIGNED_BYTE,
+                       new Uint8Array([255, 255, 255, 255]));
 
          // -
 
@@ -535,6 +559,7 @@ void main() {
 
       _ensure_prog_transform(prog, transform) {
          const gl = this.gl;
+         transform = transform || this._state._transform;
          if (transform === undefined) throw new Error('`transform` required.');
          if (prog.last_transform === transform) return;
          prog.last_transform = transform;
@@ -566,6 +591,10 @@ void main() {
          gl.disable(GL.SCISSOR_TEST);
          gl.clearColor(0, 0, 0, 0);
          gl.clear(GL.COLOR_BUFFER_BIT);
+      }
+
+      _flush() {
+
       }
 
       // -
@@ -747,6 +776,14 @@ void main() {
 
       // -
 
+      /*
+       * batch break on:
+       *  * transform
+       *  * color
+       *  * program
+       *  * lineCap/Dash/Offset
+       */
+
       _fill_fast() {
          const cur_path = this._default_path;
          if (!cur_path.length) return true; // Ok, sure!
@@ -778,23 +815,38 @@ void main() {
          const prog = this.rect_prog;
          gl.useProgram(prog);
          this._ensure_prog_transform(prog, common_transform);
-         this._ensure_blend_op(this.globalCompositeOperation);
+         this._ensure_blend_op();
 
-         const color = parse_color(this.fillStyle);
+         const c2d = this.c2d;
+         c2d.fillStyle = this.fillStyle;
+         const color = parse_color(c2d.fillStyle);
          //console.log('_fill_rects: color: ', color);
          if (!color) throw new Error('Bad fillStyle: ' + this.fillStyle);
-         gl.uniform4fv(prog.u_color, color);
 
+         color[0] *= this.globalAlpha;
+         color[1] *= this.globalAlpha;
+         color[2] *= this.globalAlpha;
+         color[3] *= this.globalAlpha;
+
+         gl.uniform4fv(prog.u_color, color);
+         gl.uniform4f(prog.u_src_rect, 0, 0, 1, 1);
+         gl.bindTexture(GL.TEXTURE_2D, this._white_tex);
+
+         this._draw_rects(sub_buf);
+      }
+
+      _draw_rects(rect_view) {
+         const gl = this.gl;
          const vbo = gl.createBuffer();
          gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-         gl.bufferData(gl.ARRAY_BUFFER, sub_buf, gl.STREAM_DRAW);
-         gl.enableVertexAttribArray(1);
+         gl.bufferData(gl.ARRAY_BUFFER, rect_view, gl.STREAM_DRAW);
          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
 
-         const quad_count = sub_buf.length / 4;
+         const quad_count = rect_view.length / 4;
          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, quad_count);
          gl.deleteBuffer(vbo);
       }
+
 
       // -
 
@@ -929,7 +981,7 @@ void main() {
          const prog = this.line_prog;
          gl.useProgram(prog);
          this._ensure_prog_transform(prog, common_transform);
-         this._ensure_blend_op(this.globalCompositeOperation);
+         this._ensure_blend_op();
 
          const dash_tex = this._tex_by_line_dash();
          gl.bindTexture(gl.TEXTURE_2D, dash_tex);
@@ -940,20 +992,14 @@ void main() {
          gl.uniform4f(prog.u_line_info, this.lineWidth, line_cap_mode,
                       dash_tex.dash_length, this.lineDashOffset);
 
-         const color = parse_color(this.strokeStyle);
+         const c2d = this.c2d;
+         c2d.strokeStyle = this.strokeStyle;
+         const color = parse_color(c2d.strokeStyle);
          //console.log('_fill_rects: color: ', color);
          if (!color) throw new Error('Bad strokeStyle: ' + this.strokeStyle);
          gl.uniform4fv(prog.u_color, color);
 
-         const vbo = gl.createBuffer();
-         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-         gl.bufferData(gl.ARRAY_BUFFER, sub_buf, gl.STREAM_DRAW);
-         gl.enableVertexAttribArray(1);
-         gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
-
-         const quad_count = sub_buf.length / 4;
-         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, quad_count);
-         gl.deleteBuffer(vbo);
+         this._draw_rects(sub_buf);
       }
 
       // -
@@ -975,6 +1021,7 @@ void main() {
       _cur_blend_op = undefined;
 
       _ensure_blend_op(blend_op) {
+         blend_op = blend_op || this.globalCompositeOperation;
          if (blend_op == 'copy') {
             this._clear_for_copy();
          }
@@ -1020,17 +1067,118 @@ void main() {
       // -
 
       fillText(text, x, y, max_width) {
-         this._putText('fill', text, x, y, max_width);
+         this._put_text('fill', text, x, y, max_width);
       }
       strokeText(text, x, y, max_width) {
-         this._putText('stroke', text, x, y, max_width);
+         this._put_text('stroke', text, x, y, max_width);
       }
 
-      _putText(type, text, x, y, max_width) {
-         console.log('fillText/strokeText not yet implemented.');
+      _put_text_cache = {};
+
+      _RE_NEWLINES = /\n/g;
+
+      _put_text(type, text, x, y, max_width) {
+         console.log(`_put_text(${[].slice.call(arguments)})`);
+         const c2d = this.c2d;
+         const gl = this.gl;
+         console.log(`_put_text: font: ${c2d.font}`);
+
+         // -
          // Measure-text
+
+         c2d.font = this.font;
+         c2d.textAlign = this.textAlign;
+         c2d.textBaseline = this.textBaseline;
+         console.log(c2d.textBaseline, this.textBaseline);
+         const meas = c2d.measureText(text);
+
+         // first: align:left, baseline:middle
+         if (meas.actualBoundingBoxAscent === undefined) {
+            // Guess time
+            const em = c2d.measureText('M').width;
+            const height = em * 1.5;
+            switch (this.textBaseline) {
+               case 'top':
+                  meas.actualBoundingBoxAscent = 0;
+                  break;
+               case 'middle':
+                  meas.actualBoundingBoxAscent = em / 2;
+                  break;
+               case 'alphabetic':
+               case 'ideographic':
+                  meas.actualBoundingBoxAscent = em;
+                  break;
+               case 'bottom':
+                  meas.actualBoundingBoxAscent = height;
+                  break;
+            }
+            meas.actualBoundingBoxDescent = height - meas.actualBoundingBoxAscent;
+         }
+         meas.height = meas.actualBoundingBoxAscent + meas.actualBoundingBoxDescent;
+         console.log('meas', meas);
+
+         // -
          // put (composite:copy) on intermediary (cached?) canvas
+         c2d.canvas.width = meas.width;
+         c2d.canvas.height = meas.height; // This resets, so reset font et al
+
+         c2d.font = this.font;
+         c2d.textAlign = this.textAlign;
+         c2d.textBaseline = this.textBaseline;
+
+         c2d.globalCompositeOperation = 'copy';
+         c2d.globalAlpha = 1.0;
+         c2d.fillStyle = this.fillStyle;
+         c2d.strokeStyle = this.strokeStyle;
+
+         let func = c2d.fillText;
+         if (type === 'stroke') {
+            func = c2d.strokeText;
+         }
+         func.call(c2d, text, 0, meas.actualBoundingBoxAscent, max_width);
+
+         // -
          // this.drawImage
+         //const image = make_gl_image(this.gl, c2d.canvas, 0, meas.actualBoundingBoxAscent);
+
+         let key = {
+            font: c2d.font,
+            textAlign: c2d.textAlign,
+            textBaseline: c2d.textBaseline,
+            type: type,
+            max_width: max_width,
+            text: text,
+         };
+         key = JSON.stringify(key);
+         console.log('key', key);
+
+         let tex;// = this._tex_cache[key];
+         let should_update = false;
+         if (!tex) {
+            tex = this._tex_cache[key] = create_nomip_texture(gl);
+
+            gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+            gl.texImage2D(GL.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c2d.canvas);
+            gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+
+            tex.width = meas.width;
+            tex.height = meas.height;
+            tex.y_offset = meas.actualBoundingBoxAscent;
+         }
+
+         // -
+
+         const d_rect = {
+            x: x,
+            y: y - tex.y_offset,
+            w: tex.width,
+            h: tex.height,
+         };
+         console.log(d_rect);
+
+         // -
+
+         this._draw_tex_rect(tex, null, d_rect);
       }
 
       // -
@@ -1058,120 +1206,7 @@ void main() {
          this.fillRect(x, y, w, h);
          this.restore();
       }
-/*
-      _fillRect(x, y, w, h, fill_style, blend_op) {
-         const c2d = this.c2d;
-         const gl = this.gl;
 
-         if (fill_style == 'copy') {
-            this._clear_for_copy();
-            fill_style = 'source-over';
-         }
-
-         const rect = make_rect(arguments);
-         const gl_rect = Object.assign({}, rect);
-         abs_rect(gl_rect);
-         flip_y(gl_rect, gl.canvas.height);
-
-         const is_color_fill = ((typeof fill_style) == 'string');
-
-         const fastpath = (() => {
-            if (!is_color_fill) {
-               console.log('!is_color_fill');
-               return false;
-            }
-
-            if (this._state._transform) {
-               console.log('this._state._transform');
-               return false;
-            }
-
-            const TRIVIAL_COMPOSITES = [
-               'source-over',
-               'copy', // copy is clear+source-over, aka terrible :/
-            ];
-            if (!TRIVIAL_COMPOSITES.includes(blend_op)) {
-               console.log(`!TRIVIAL_COMPOSITES.includes(${blend_op})`);
-               return false;
-            }
-
-            function dist_to_int(x) {
-               return Math.abs(x - Math.round(x));
-            }
-            let err = 0;
-            err += dist_to_int(gl_rect.x);
-            err += dist_to_int(gl_rect.y);
-            err += dist_to_int(gl_rect.w);
-            err += dist_to_int(gl_rect.h);
-            if (err >= 0.1) {
-               console.log('non-pixel-aligned');
-               return false;
-            }
-
-            return true;
-         })();
-         if (fastpath) {
-            let color = parse_color(fill_style);
-            console.log('fastpath color', color);
-            if (!color) {
-               c2d.fillStyle = fill_style;
-               c2d.fillRect(0, 0, 1, 1);
-               color = c2d.getImageData(0, 0, 1, 1).data;
-               color = [].map.call(color, x => x / 255.0);
-            }
-            color = color.map(x => x * this._state.globalAlpha);
-
-            gl.enable(gl.SCISSOR_TEST);
-            gl.scissor(gl_rect.x, gl_rect.y, gl_rect.w, gl_rect.h);
-            gl.clearColor(color[0], color[1], color[2], color[3]);
-            gl.clear(gl.COLOR_BUFFER_BIT);
-            gl.disable(gl.SCISSOR_TEST);
-            return;
-         }
-
-         // -
-
-         let src_w = w;
-         let src_h = h;
-         if (is_color_fill) {
-            src_w = 1;
-            src_h = 1;
-         }
-         c2d.fillStyle = fill_style;
-         c2d.globalCompositeOperation = blend_op;
-         c2d.fillRect(x, y, src_w, src_h);
-         const idata = c2d.getImageData(x, y, src_w, src_h);
-
-         if (is_color_fill) {
-            const color = parse_color(fill_style);
-            console.log('color', color);
-            if (!color) throw new Error('Bad fill_style: ' + fill_style);
-
-            const gl = this.gl;
-            const prog = this.fill_prog;
-            gl.useProgram(prog);
-            gl.disable(gl.BLEND);
-            gl.uniform4f(prog.u_color, color[0],
-                                       color[1],
-                                       color[2],
-                                       color[3]);
-
-            const norm_rect = Object.assign({}, rect);
-            scale_rect(norm_rect, 1.0 / gl.canvas.width, 1.0 / gl.canvas.height);
-            console.log('norm_rect', norm_rect);
-            gl.disableVertexAttribArray(1);
-            gl.vertexAttrib4f(1, norm_rect.x, norm_rect.y,
-                                 norm_rect.w, norm_rect.h);
-
-            prog.ensure_transform();
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-            return;
-         }
-
-         console.log('fillRect non-color-fill not implemented');
-         return;
-      }
-*/
       getImageData(x, y, w, h) {
          const c2d = this.c2d;
          const gl = this.gl;
@@ -1207,6 +1242,105 @@ void main() {
          const fetchMatrix = make_fetch_mat(idata.width, idata.height,
       }
       */
+
+      _tex_cache = {};
+
+      drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh) {
+         const gl = this.gl;
+         const src_w = src.width || src.naturalWidth;
+         const src_h = src.height || src.naturalHeight;
+
+         if (dx === undefined) {
+            dx = sx;
+            dy = sy;
+            dw = sw;
+            dh = sh;
+
+            sx = 0;
+            sy = 0;
+            sw = src_w;
+            sh = src_h;
+         }
+         if (dw === undefined) {
+            dw = sw;
+            dh = sh;
+         }
+
+         // -
+
+         const src_id = obj_id(src);
+
+         let tex = this._tex_cache[src_id];
+         let should_update = false;
+         if (!tex) {
+            tex = this._tex_cache[src_id] = create_nomip_texture(gl);
+            should_update = true;
+         } else {
+            let is_static = false; // Video/Canvas
+            if (src instanceof HTMLImageElement) {
+               is_static = true;
+
+               const src_url = src.currentSrc || src.src;
+               if (src.currentSrc.endsWith('.gif')) {
+                  is_static = false;
+               }
+            }
+            should_update = !is_static;
+         }
+
+         if (should_update) {
+            gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+            gl.texImage2D(GL.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+            gl.pixelStorei(GL.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+         }
+
+         const s_norm_rect = {
+            x: sx / src_w,
+            y: sy / src_h,
+            w: sw / src_w,
+            h: sh / src_h,
+         };
+         const d_rect = {
+            x: dx,
+            y: dy,
+            w: dw,
+            h: dh,
+         };
+
+         // -
+
+         this._draw_tex_rect(tex, s_norm_rect, d_rect);
+      }
+
+      /* _draw_tex_rect callers:
+       * * drawImage
+       * * fillText/strokeText
+       * * putImageData
+       */
+      _draw_tex_rect(tex, s_norm_rect, d_rect) {
+         s_norm_rect = s_norm_rect || {
+            x: 0, y: 0,
+            w: 1, h: 1,
+         };
+
+         const gl = this.gl;
+
+         const prog = this.rect_prog;
+         gl.useProgram(prog);
+         gl.uniform4f(prog.u_color, this.globalAlpha, this.globalAlpha,
+                      this.globalAlpha, this.globalAlpha);
+         gl.uniform4f(prog.u_src_rect, s_norm_rect.x, s_norm_rect.y,
+                      s_norm_rect.w, s_norm_rect.h);
+         gl.bindTexture(GL.TEXTURE_2D, tex);
+
+         this._ensure_blend_op();
+         this._ensure_prog_transform(prog);
+
+         const rect_view = new Float32Array([
+            d_rect.x, d_rect.y, d_rect.w, d_rect.h,
+         ]);
+         this._draw_rects(rect_view);
+      }
    }
 
    const orig_get_context = HTMLCanvasElement.prototype.getContext;
