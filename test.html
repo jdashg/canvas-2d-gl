@@ -67,12 +67,41 @@ function draw(c2d) {
     c2d.fillText('KangarooM', 0, 0);
   }
 
-  if (1) {
+  if (0) {
     c2d.beginPath();
     c2d.rect(0, 0, 50, 50);
+    c2d.translate(0, -20);
+    c2d.closePath();
     c2d.rect(25, 25, 50, 50);
     c2d.fillStyle = '#9099';
     c2d.fill();
+  }
+  if (0) {
+    c2d.beginPath();
+    c2d.rect(10, 10, 30, 30);
+    c2d.lineWidth = 10;
+    c2d.strokeStyle = '#9099';
+    //c2d.lineJoin = 'round';
+    c2d.lineCap = 'round'
+    c2d.stroke();
+  }
+  if (1) {
+    c2d.beginPath();
+    //c2d.rect(10, 10, 30, 30);
+    const x = 10;
+    const y = 10;
+    const w = 30;
+    const h = 30;
+    c2d.moveTo(x, y);
+    c2d.lineTo(x+w, y);
+    c2d.lineTo(x+w, y+h);
+    c2d.lineTo(x, y+h);
+    c2d.closePath();
+    c2d.lineWidth = 10;
+    c2d.strokeStyle = '#9099';
+    //c2d.lineJoin = 'round';
+    c2d.lineCap = 'round'
+    c2d.stroke();
   }
 }
 draw(c2d_2d);

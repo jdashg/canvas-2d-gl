@@ -170,6 +170,8 @@
       Object.defineProperty(obj, k, desc);
    }
 
+   // -
+
    function on_width_height(obj, k, args, ret) {
       if (args.length != 1) return;
       const context = obj._gl2d_context;
@@ -179,6 +181,213 @@
    }
    hook_prop(HTMLCanvasElement.prototype, 'width', on_width_height);
    hook_prop(HTMLCanvasElement.prototype, 'height', on_width_height);
+
+   // -
+
+   function on_path_line_or_move(obj, pen_down, x, y) {
+      obj._rects = null;
+      if (obj._lines === null) return;
+      if (obj._lines === undefined) {
+         obj._lines = [];
+      }
+
+      if (pen_down) {
+         const x0 = obj._lines.x || 0.0;
+         const y0 = obj._lines.y || 0.0;
+         obj._lines.push(x0, x0, x, y);
+      }
+      obj._lines.x = x;
+      obj._lines.y = y;
+   }
+
+   function on_path_rect(obj, name, args, ret) {
+      obj._lines = null;
+      if (obj._rects === null) return;
+      if (obj._rects === undefined) {
+         obj._rects = [];
+      }
+
+      obj._rects.push(args[0], args[1], args[2], args[3]);
+   }
+
+   function on_path_line(obj, name, args, ret) {
+      on_path_line_or_move(obj, true, args[0], args[1]);
+   }
+   function on_path_move(obj, name, args, ret) {
+      on_path_line_or_move(obj, false, args[0], args[1]);
+   }
+
+   function on_path_unimplemented(obj, name, args, ret) {
+      obj._lines = null;
+      obj._rects = null;
+   }
+
+   for (const k in Path2D.prototype) {
+      let hook = on_path_unimplemented;
+      switch (k) {
+         case 'lineTo':
+            hook = on_path_line;
+            break;
+         case 'moveTo':
+            hook = on_path_move;
+            break;
+         case 'rect':
+            hook = on_path_rect;
+            break;
+      }
+      hook_prop(Path2D.prototype, k, hook);
+   }
+
+   // -
+
+   class Float32Vector {
+      constructor(initial_capacity) {
+         initial_capacity = initial_capacity || 1000;
+         this.chunks = [];
+         if (initial_capacity) {
+            const chunk = new Float32Array(initial_capacity);
+            this.chunks.push(chunk);
+         }
+         this.size = 0;
+         this.avail = initial_capacity;
+      }
+
+      reset() {
+         this.data(); // coalesce
+         this.avail = this.size;
+         this.size = 0;
+      }
+
+      set(src, src_offset, src_size) {
+         src_offset = src_offset || 0;
+         src_size = src_size || (src.length - src_offset);
+
+         let dst_avail = this.avail;
+         let chunk;
+         if (src_size > dst_avail) { // split across chunks
+            let next_size = 0;
+            if (dst_avail) {
+               chunk = this.chunks[this.chunks.length-1];
+
+               let sub;
+               if (src.subarray) {
+                  sub = src.subarray(src_offset, src_offset + dst_avail);
+               } else {
+                  sub = src.slice(src_offset, src_offset + dst_avail);
+               }
+
+               chunk.set(sub, chunk.length - dst_avail);
+               this.size += dst_avail;
+               this.avail -= dst_avail;
+               src_offset += dst_avail;
+               src_size -= dst_avail;
+
+               next_size = chunk.length * 3;
+            }
+
+            if (next_size < src_size) {
+               next_size = src_size;
+            }
+            chunk = new Float32Array(next_size);
+            this.chunks.push(chunk);
+            this.avail += chunk.length;
+
+            if (src.subarray) {
+               src = src.subarray(src_offset);
+            } else {
+               src = src.slice(src_offset);
+            }
+
+            dst_avail = this.avail;
+         }
+
+         chunk.set(src, chunk.length - dst_avail);
+         this.size += dst_avail;
+         this.avail -= dst_avail;
+      }
+
+      data() {
+         if (this.chunks.length != 1) {
+            const data = new Float32Array(this.size + this.avail);
+            let pos = 0;
+            for (let x of this.chunks) {
+               data.set(x, pos);
+               pos += x.length;
+            }
+            this.chunks = [data];
+         }
+         let ret = this.chunks[0];
+         if (this.avail) {
+            ret = ret.subarray(0, ret.length - this.avail);
+         }
+         return ret;
+      }
+   };
+
+   // -
+
+   function array_equals(a, b) {
+      if (a === b) return true;
+      if (a.length != b.length) return false;
+      let ret = true;
+      for (const i in a) {
+         ret &= a[i] == b[i];
+      }
+      return ret;
+   }
+
+   class RenderPass {
+      constructor(type) {
+         this.type = type;
+      }
+
+      equals(that) {
+         if (this.type != that.type) return false;
+
+         let ret = true;
+         ret &= this.composite_op == that.composite_op;
+         ret &= array_equals(this.color, that.color);
+         ret &= this.tex == that.tex;
+         ret &= array_equals(this.src_rect, that.src_rect);
+         ret &= array_equals(this.line_info, that.line_info);
+         return ret;
+      }
+   }
+
+   class CommandBuffer {
+      xyxy_data = new Float32Vector(1000);
+      misc_data = new Float32Vector(1000);
+      cmds = [];
+      cur_pass = new RenderPass('none');
+      cached_pass = null;
+      last_pass = null;
+
+      constructor() {
+      }
+
+      set composite_op(v) {
+         this.cached_pass = null;
+         this.cur_pass.composite_op = v;
+      }
+      set alpha(v) {
+         this.cached_pass = null;
+         this.cur_pass.composite_op = v;
+      }
+
+      fill(composite_op, color, tex, src_rect, prim_count) {
+         let cmd = new CmdDraw('fill');
+         cmd.composite_op = composite_op;
+         cmd.color = color;
+         cmd.tex = tex;
+         cmd.src_rect = src_rect;
+
+
+
+         if (cmd) {
+            if (cmd.type == 'fill' && cmd.color == color && cmd.blend == blend &&
+         if (!cmd) {
+
+   };
 
    // -
 
@@ -327,6 +536,8 @@
       return arr;
    }
 
+   const IDENT_TRANSFORM = mat_ident(3, 3);
+
    const DRAW_STATE = {
       fillStyle               : '#000',
       font                    : '10px sans-serif',
@@ -345,11 +556,9 @@
       strokeStyle             : '#000',
       textAlign               : 'start',
       textBaseline            : 'alphabetic',
-      _transform              : null,
+      _transform              : IDENT_TRANSFORM,
       _line_dash              : [],
    };
-
-   const DEFAULT_TRANSFORM = mat_ident(2, 3);
 
    class CanvasRenderingContextGL2D {
       constructor(gl) {
@@ -409,6 +618,7 @@ void main() {
          const RECT_VS = `
 attribute vec2 a_box01;
 attribute vec4 a_dest_rect;
+attribute float a_order;
 uniform mat3 u_transform;
 uniform vec4 u_src_rect;
 varying vec2 v_tex_coord;
@@ -418,6 +628,7 @@ void main() {
    vec3 dest3 = u_transform * vec3(dest2, 1);
    gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
+   gl_Position.z = -a_order;
 
    v_tex_coord = u_src_rect.xy + a_box01 * u_src_rect.zw;
 }`.trim();
@@ -437,6 +648,7 @@ void main() {
          const LINE_VS = `
 attribute vec2 a_box01;
 attribute vec4 a_xy0xy1;
+attribute float a_order;
 uniform mediump vec4 u_line_info;
 uniform mat3 u_transform;
 varying vec2 v_line_coord;
@@ -472,6 +684,7 @@ void main() {
    xy_pos = u_transform * xy_pos;
    gl_Position = vec4(xy_pos.xy * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
+   gl_Position.z = -a_order;
 
    v_line_coord = vec2(-half_w_len, -cap_len) + a_box01 * vec2(u_line_width, capped_h_len);
    v_line_height = h_len;
@@ -613,28 +826,21 @@ void main() {
       // -
 
       transform(a, b, c, d, e, f) {
-         let cur = this._state._transform;
-         if (!cur) {
-            cur = mat_ident(2, 3);
-         }
          const m = [[a, c, e],
                     [b, d, f],
                     [0, 0, 1]];
-         this._state._transform = mat_mul(cur, m);
+         this._state._transform = mat_mul(this._state._transform, m);
       }
 
       getTransform() {
-         let cur = this._state._transform;
-         if (!cur) {
-            cur = mat_ident(2, 3);
-         }
+         const cur = this._state._transform;
          return new DOMMatrix([cur[0][0], cur[0][1], 0, cur[0][2],
                                cur[1][0], cur[1][1], 0, cur[1][2],
                                0, 0, 1, 0,
                                0, 0, 0, 1]);
       }
       setTransform(a, b, c, d, e, f) {
-         this._state._transform = null;
+         this._state._transform = IDENT_TRANSFORM;
          this.transform(a, b, c, d, e, f);
       }
       rotate(cw_rads) {
@@ -649,26 +855,15 @@ void main() {
          this.transform(1,0, 0,1, x,y);
       }
 
-      // -
-
-      setLineDash(arr) {
-         this._state._line_dash = arr.slice();
-      }
-      getLineDash() {
-         return this._state._line_dash.slice();
-      }
-
       _gl_transform(rows) {
          if (rows === undefined) {
             rows = this._state._transform;
          }
-         if (!rows) {
-            rows = DEFAULT_TRANSFORM;
-         }
          const kx = 1/this.canvas.width;
          const ky = 1/this.canvas.height;
-         const scale_mat = [[kx, 0],
-                            [0, ky]];
+         const scale_mat = [[kx, 0, 0],
+                            [0, ky, 0],
+                            [0,  0, 1]];
          const scaled_rows = mat_mul(scale_mat, rows);
 
          const ret = new Float32Array(9);
@@ -682,6 +877,15 @@ void main() {
          ret[7] = scaled_rows[1][2];
          ret[8] = 1;
          return ret;
+      }
+
+      // -
+
+      setLineDash(arr) {
+         this._state._line_dash = arr.slice();
+      }
+      getLineDash() {
+         return this._state._line_dash.slice();
       }
 
       // -
@@ -704,48 +908,62 @@ void main() {
 
       // -
 
-      _default_path = [];
-
-      beginPath() {
-         this._default_path = [];
-      }
-
-      _path_add(func, args) {
-         this._default_path.push({
-            func: func,
-            args: [].slice.call(args),
-            transform: this._state._transform,
-         });
-      }
+      _default_path = new Path2D();
 
       // -
 
+      beginPath() {
+         this._default_path = new Path2D();
+      }
+
       arc() {
-         this._path_add('arc', arguments);
+         console.error('unimplemented');
       }
       arcTo() {
-         this._path_add('arcTo', arguments);
+         console.error('unimplemented');
       }
       bezierCurveTo() {
-         this._path_add('bezierCurveTo', arguments);
-      }
-      closePath() {
-         this._path_add('closePath', arguments);
-      }
-      ellipse() {
-         this._path_add('ellipse', arguments);
-      }
-      lineTo() {
-         this._path_add('lineTo', arguments);
-      }
-      moveTo() {
-         this._path_add('moveTo', arguments);
+         console.error('unimplemented');
       }
       quadraticCurveTo() {
-         this._path_add('quadraticCurveTo', arguments);
+         console.error('unimplemented');
       }
-      rect() {
-         this._path_add('rect', arguments);
+      ellipse() {
+         console.error('unimplemented');
+      }
+
+      closePath() {
+         this._default_path.closePath();
+      }
+      lineTo(x, y) {
+         let pos = [x, y, 1];
+         pos = mat_mul_vec(this._state._transform, pos);
+         this._default_path.lineTo(pos[0], pos[1]);
+      }
+      moveTo(x, y) {
+         let pos = [x, y, 1];
+         pos = mat_mul_vec(this._state._transform, pos);
+         this._default_path.moveTo(pos[0], pos[1]);
+      }
+      rect(x, y, w, h) {
+         const cur = this._state._transform;
+         if (cur[0][1] == 0.0 && cur[1][0] == 0.0) {
+            let pos = [x, y, 1];
+            let size = [w, h, 0];
+            pos = mat_mul_vec(this._state._transform, pos);
+            size = mat_mul_vec(this._state._transform, size);
+            this._default_path.rect(pos[0], pos[1], size[0], size[1]);
+            return;
+         }
+
+         // TODO: Handle rotate/skew transfers per-rect.
+
+         // Shim out to move/line:
+         this.moveTo(x, y);
+         this.lineTo(x+w, y);
+         this.lineTo(x+w, y+h);
+         this.lineTo(x, y+h);
+         this.closePath();
       }
 
       // -
@@ -767,22 +985,33 @@ void main() {
 
       // -
 
-      fill() {
-         if (this._fill_fast()) return;
+      fill(a1, a2) {
+         let filL_rule, path;
+         if (a2 === undefined) {
+            path = this._default_path;
+            filL_rule = a1;
+         } else {
+            path = a1;
+            filL_rule = a2;
+         }
+
+         filL_rule = filL_rule || 'nonzero';
+
+         // -
+
+         if (filL_rule == 'nonzero') {
+            if (this._fill_fast()) return;
+         }
+         console.error('unimplemented');
       }
-      stroke() {
-         if (this._stroke_fast()) return;
+
+      stroke(path) {
+         path = path || this._default_path;
+         if (this._stroke_fast(path)) return;
+         console.error('unimplemented');
       }
 
       // -
-
-      /*
-       * batch break on:
-       *  * transform
-       *  * color
-       *  * program
-       *  * lineCap/Dash/Offset
-       */
 
       _fill_fast() {
          const cur_path = this._default_path;
@@ -908,6 +1137,88 @@ void main() {
          'square': 2,
       };
 
+
+      fillStyle               : '#000',
+      font                    : '10px sans-serif',
+      globalAlpha             : 1.0,
+      globalCompositeOperation: 'source-over',
+      imageSmoothingEnabled   : true,
+      lineCap                 : 'butt',
+      lineDashOffset          : 0.0,
+      lineJoin                : 'miter',
+      lineWidth               : 1.0,
+      miterLimit              : 10.0,
+      shadowBlur              : 0,
+      shadowColor             : '#0000',
+      shadowOffsetX           : 0,
+      shadowOffsetY           : 0,
+      strokeStyle             : '#000',
+      textAlign               : 'start',
+      textBaseline            : 'alphabetic',
+      _transform              : IDENT_TRANSFORM,
+      _line_dash              : [],
+
+      _stroke_fast(path) {
+         let line_cap = this.lineCap;
+         const line_join = this.lineJoin;
+
+         let can_join = (line_cap == 'round' && line_join == 'round');
+         if (path._rects) {
+            if (line_join == 'miter') {
+               line_cap = 'square';
+               can_join = true;
+            } else if (line_join == 'round') {
+               line_cap = 'round';
+               can_join = true;
+            }
+         }
+         if (can_join) {
+            console.log(`Can't join lines with lineCap:'${this.lineCap}', lineJoin:${this.lineJoin}'.`);
+            return false;
+         }
+
+         if (path._rects && !path._lines) {
+            const rects = path._rects;
+            const rect_count = rects.length / 4;
+            const lines = path._lines = Array(rect_count * 8);
+            let src_itr = 0;
+            let dst_itr = 0;
+            while (src_itr < rects.length) {
+               const x = rects[src_itr++];
+               const y = rects[src_itr++];
+               const w = rects[src_itr++];
+               const h = rects[src_itr++];
+
+               lines[dst_itr++] = x;
+               lines[dst_itr++] = y;
+               lines[dst_itr++] = x+w;
+               lines[dst_itr++] = y;
+               lines[dst_itr++] = x+w;
+               lines[dst_itr++] = y+h;
+               lines[dst_itr++] = x;
+               lines[dst_itr++] = y+h;
+            }
+         }
+
+         const c2d = this.c2d;
+
+         const rp = new RenderPass('stroke');
+         c2d.strokeStyle = this.strokeStyle;
+         rp.style = c2d.strokeStyle;
+
+         const lines = path._lines;
+         if (!lines) return false;
+
+         const cbuf = this._cbuf;
+
+
+
+
+
+
+      }
+
+
       _stroke_fast() {
          const cur_path = this._default_path;
          if (!cur_path.length) return; // Ok, sure!
@@ -1012,6 +1323,50 @@ void main() {
 
          gl.clear(gl.DEPTH_BUFFER_BIT);
          gl.disable(gl.DEPTH_TEST);
+      }
+
+      // -
+
+      clip(a1, a2) {
+         let fillRule, path;
+         if (a2 === undefined) {
+            path = this._default_path;
+            fillRule = a1;
+         } else {
+            path = a1;
+            fillRule = a2;
+         }
+
+         // -
+         // fill stencil plane
+
+         const gl = this.gl;
+
+         let stencil_op;
+         switch (fillRule) {
+         case 'evenodd':
+            stencil_op = gl.INVERT;
+            break;
+
+         case 'nonzero':
+         default:
+            stencil_op = gl.REPLACE;
+            break;
+         }
+
+         gl.clear(gl.STENCIL_BUFFER_BIT);
+         gl.colorMask(false, false, false, false);
+         gl.stencilFunc(gl.ALWAYS, 1, 0);
+         gl.stencilOp(stencil_op, stencil_op, stencil_op);
+
+         this.fill(path, 'nonzero');
+
+         // -
+         // set stencil func/op for rendering
+
+         gl.colorMask(true, true, true, true);
+         gl.stencilFunc(gl.EQUALS, 1, 1);
+         gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
       }
 
       // -
