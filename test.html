@@ -2,7 +2,7 @@
 <head>
 <meta charset='utf-8'/>
 <script src='../canvas-rr/rr-record.js'></script>
-<script src='gl-2d.js'></script>
+<script src='canvas-2d-gl.js'></script>
 </head>
 <body>
 <canvas id='e_canvas'></canvas>e_canvas
@@ -16,7 +16,7 @@ e_canvas_gl.style.border = '2px solid black';
 e_canvas.style.border = '2px solid green';
 
 const c2d_2d = e_canvas.getContext('2d');
-const c2d_gl = e_canvas_gl.getContext('gl-2d');
+const c2d_gl = e_canvas_gl.getContext('2d-gl');
 
 function draw(c2d) {
   c2d.canvas.width = 150;

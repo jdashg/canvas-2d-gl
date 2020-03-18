@@ -1364,7 +1364,7 @@ void main() {
    const orig_get_context = HTMLCanvasElement.prototype.getContext;
    HTMLCanvasElement.prototype.getContext = function(type, attribs) {
       let ret = null;
-      if (type == 'gl-2d') {
+      if (type == '2d-gl') {
          attribs = attribs || {
             alpha: true,
             antialias: true,

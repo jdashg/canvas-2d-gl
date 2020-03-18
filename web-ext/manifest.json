@@ -1,0 +1,14 @@
+{
+   "manifest_version": 2,
+   "name": "canvas-2d-gl",
+   "version": "0.1",
+
+   "content_scripts": [
+      {
+        "matches": ["https://*/*", "http://*/*", "file://*/*"],
+        "js": ["out/canvas-2d-gl.content.js"],
+        "run_at": "document_start",
+        "all_frames": true
+      }
+   ]
+}
