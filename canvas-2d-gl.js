@@ -1,6 +1,12 @@
 (() => {
    const GL = WebGLRenderingContext;
 
+   window.OVERRIDE_2D = false;
+
+   if (window._HAS_CANVAS_2D_GL) return;
+   window._HAS_CANVAS_2D_GL = true;
+   console.log('[canvas-2d-gl] Injected.');
+
    // -
 
    const next_id = (() => {
@@ -113,7 +119,7 @@
       const elem = document.createElement('canvas');
       elem.width = w;
       elem.height = h;
-      return elem.getContext('2d');
+      return elem.getContext('2d', {webgl:false});
    }
 
    // -
@@ -356,7 +362,7 @@
          const c2d_canvas = document.createElement('canvas');
          c2d_canvas.width = gl.canvas.width;
          c2d_canvas.height = gl.canvas.height;
-         const c2d = c2d_canvas.getContext('2d');
+         const c2d = c2d_canvas.getContext('2d', {webgl: false});
          //document.body.appendChild(c2d_canvas);
 
          this.gl = gl;
@@ -1231,7 +1237,7 @@ void main() {
 
          const idata = c2d.createImageData(w, h);
          const bytes_per_row = 4*gl_rect.w;
-         for (let gl_row = 0; gl_row < gl_rect.h; ++gl_row) { // yflip
+         for (let gl_row = 0; gl_row < gl_rect.h; ++gl_row) { // y-flip :) -> :(
             const gl_start = bytes_per_row*gl_row;
             const id_start = bytes_per_row*(gl_rect.h - 1 - gl_row);
             idata.data.set(p.subarray(gl_start, gl_start + bytes_per_row), id_start);
@@ -1286,24 +1292,21 @@ void main() {
             tex = this._tex_cache[src_id] = create_nomip_texture(gl);
             should_update = true;
          } else {
-            let is_static = src._is_static;
-            if (is_static === undefined) {
-               is_static = false; // Video/Canvas
+            if (src._is_static === undefined) {
+               src._is_static = false; // Video/Canvas
+
                if (src instanceof HTMLImageElement) {
+                  src._is_static = true; // Even gifs always pick the first frame
+
                   src.addEventListener('load', e => {
                      src._is_static = undefined;
-                  }, false);
-
-                  is_static = true;
-
-                  const src_url = src.currentSrc || src.src;
-                  if (src.currentSrc.endsWith('.gif')) {
-                     is_static = false;
-                  }
+                  }, {
+                     capture: false,
+                     once: true,
+                  });
                }
-               src._is_static = is_static;
             }
-            should_update = !is_static;
+            should_update = !src._is_static;
          }
 
          if (should_update) {
@@ -1362,23 +1365,28 @@ void main() {
    }
 
    const orig_get_context = HTMLCanvasElement.prototype.getContext;
-   HTMLCanvasElement.prototype.getContext = function(type, attribs) {
+   HTMLCanvasElement.prototype.getContext = function(type, options) {
       let ret = null;
-      if (type == '2d-gl') {
-         attribs = attribs || {
+      const default_options = {
+         webgl: window.OVERRIDE_2D,
+      };
+      options = options || default_options;
+      if (type == '2d' && options.webgl) {
+         options = Object.assign({
             alpha: true,
             antialias: true,
             depth: true,
             stencil: true,
             preserveDrawingBuffer: true,
             premultipliedAlpha: true,
-         };
+         }, options);
          const gl_canvas = this;
-         const gl = orig_get_context.call(gl_canvas, 'webgl', attribs);
+         const gl = orig_get_context.call(gl_canvas, 'webgl', options);
          if (!gl)
             return null;
 
          ret = new CanvasRenderingContextGL2D(gl);
+         console.error('FYI: new CanvasRenderingContextGL2D:', ret);
       }
       if (!ret) {
          ret = orig_get_context.apply(this, arguments);
