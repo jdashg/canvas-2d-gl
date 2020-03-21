@@ -605,7 +605,6 @@ void main() {
 
    float half_width = u_line_width / 2.0; // u_line_width: 4 => [-2, 2]
 
-
    vec2 p0 = a_xy0xy1.xy;
    vec2 p1 = a_xy0xy1.zw;
    vec2 h = p1 - p0;
@@ -619,28 +618,32 @@ void main() {
       combined_cap_size = u_line_width; // then square or round
    }
 
-   vec2 cap_w = (u_transform * vec3(w_dir * u_line_width, 0.0)).xy;
+   vec2 w_dir_t = w_dir;
+   w_dir_t = (u_transform * vec3(w_dir_t, 0.0)).xy;
+   w_dir_t = normalize(w_dir_t) * u_line_width;
+   //w_dir_t /= length(w_dir_t);
    //cap_w = w_dir * dot(w_dir, cap_w);
-   vec2 combined_cap_h = (u_transform * vec3(h_dir * combined_cap_size, 0.0)).xy;
 
-   vec2 cap_size = cap_w + combined_cap_h;
+   vec2 h_dir_t = h_dir;
+   h_dir_t = (u_transform * vec3(h_dir_t, 0.0)).xy;
+   h_dir_t = h_dir * dot(h_dir_t, h_dir);
+   h_dir_t = normalize(h_dir_t) * combined_cap_size;
 
-   vec2 cap_h = h_dir * dot(h_dir, combined_cap_h);
+   w_dir_t = (u_transform * vec3(w_dir_t, 0.0)).xy; // Again, for reasons
+   h_dir_t = (u_transform * vec3(h_dir_t, 0.0)).xy;
+
+   vec2 cap_w = w_dir_t;
+   vec2 cap_h = h_dir * dot(h_dir_t, h_dir);
+   //vec2 cap_h = h_dir * combined_cap_size;
 
    p0 -= (cap_w+cap_h) * 0.5;
-   //p1 += cap_size * 0.5;
-
-   vec2 capped_h = h_dir * (h_len + dot(h_dir, combined_cap_h));
+   vec2 capped_h = h + cap_h;
 
    // Col-major: [ w.x , capped_h.x, p0.x ]   [ corner.x ]
    //            [ w.y , capped_h.y, p0.y ] x [ corner.y ]
    //            [   0 ,          0,    1 ]   [        1 ]
    mat3 xy_from_wh = mat3(vec3(cap_w, 0), vec3(capped_h, 0), vec3(p0, 1));
-
-
    vec3 xy_pos = xy_from_wh * vec3(corner01, 1);
-
-   //xy_pos = u_transform * vec3(xy_pos.xy, 0.0);
 
    gl_Position = vec4(xy_pos.xy / u_canvas_size * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
