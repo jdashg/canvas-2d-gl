@@ -626,30 +626,35 @@ void main() {
    // PDF.pdf:
    // The line  width parameter specifies the thickness of the line used to stroke a path. It shall be a non-negative number  expressed  in  user  space  units;  stroking  a  path  shall  entail  painting  all  points  whose  perpendicular  distance from the path in user space is less than or equal to half the line width. The effect produced in device space depends on the current transformation matrix (CTM) in effect at the time the path is stroked. If the CTM specifies scaling by different factors in the horizontal and vertical dimensions, the thickness of stroked lines in device  space  shall  vary  according  to  their  orientation.
 
-   // Tellingly, only scale (but not translate or rotate) change stroking.
-   // This tells us that we're acting based on only m00 and m11.
+   // On our reference implementation, both scale and rotate, but not translate, affect stroking.
+   // We need to do *something* with the non-translate coeffs.
 
-   vec2 w_t = (u_transform * vec3(w, 0.0)).xy;
-   vec2 cap_h = h_dir * combined_cap_size;
-   vec2 cap_h_t = (u_transform * vec3(cap_h, 0.0)).xy;
-   cap_h_t = h_dir * length(cap_h_t);
+   //vec2 w_t = (u_transform * vec3(w, 0.0)).xy;
+   vec2 w_dir_t = (u_transform * vec3(w_dir, 0.0)).xy;
+   vec2 h_dir_t = (u_transform * vec3(h_dir, 0.0)).xy;
+   vec3 cc = cross(vec3(normalize(w_dir_t), 0.0), vec3(normalize(h_dir_t), 0.0));
+   vec2 cap_h_t = combined_cap_size * h_dir * length(cc);
+   //vec2 cap_h_t = cross(vec3(w_dir_t, 0.0),
+   //vec2 cap_h = h_dir * combined_cap_size;
+   //vec2 cap_h_t = (u_transform * vec3(cap_h, 0.0)).xy;
+   //cap_h_t = h_dir * dot(h_dir, cap_h_t);
 
-   vec2 w_dir_t = normalize((u_transform * vec3(w_dir, 0.0)).xy);
-   vec2 h_dir_t = normalize((u_transform * vec3(h_dir, 0.0)).xy);
+   vec2 w_t = normalize(w_dir_t);
+   w_t = (u_transform * vec3(w_t, 0.0)).xy;
+
+   cap_h_t = h_dir * combined_cap_size * length(w_t) * length(cc);
+
+   w_t *= u_line_width;
 
    // -
 
-   vec2 w_tt = (u_transform * vec3(w_t, 0.0)).xy;
-   w_tt = normalize(w_tt) * length(w_t);
+   //vec2 w_tt = (u_transform * vec3(w_t, 0.0)).xy;
+   //w_tt = normalize(w_tt) * length(w_t);
 
    //vec2 cap_h = h_dir * dot(h_dir_t, h_dir);
    //vec2 cap_h = h_dir * combined_cap_size;
 
    vec2 cap_size_t = w_t + cap_h_t;
-
-   vec2 cap_size_tt = cap_size_t;
-   cap_size_tt = (u_transform * vec3(cap_size_tt, 0.0)).xy;
-   cap_size_tt = normalize(cap_size_tt) * length(cap_size_t);
 
    p0 -= cap_size_t * 0.5;
    p1 += cap_size_t * 0.5;
