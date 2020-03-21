@@ -180,11 +180,15 @@ function draw(c2d) {
        c2d.resetTransform();
        c2d.scale(3, 1);
        c2d.translate(10, 10); // No-op to stroke
+       c2d.rotate(10); // No-op to stroke
        //c2d.scale(1, 3);
-       c2d.strokeStyle = '#aaa';
+       c2d.strokeStyle = '#999';
        c2d.lineCap = 'square';
        c2d.stroke();
        c2d.strokeStyle = '#ccc';
+       c2d.lineCap = 'round';
+       c2d.stroke();
+       c2d.strokeStyle = '#fff';
        c2d.lineCap = 'butt';
        c2d.stroke();
    }
@@ -194,10 +198,10 @@ function draw(c2d) {
        c2d.beginPath();
        //c2d.scale(3, 3);
        c2d.moveTo(20, 90);
-       c2d.lineTo(40, 90);
+       c2d.lineTo(65, 90);
        c2d.resetTransform();
        //c2d.scale(3, 1);
-       c2d.scale(1, 1.1);
+       c2d.scale(3, 3);
        c2d.strokeStyle = '#aa0';
        c2d.lineCap = 'square';
        c2d.stroke();
