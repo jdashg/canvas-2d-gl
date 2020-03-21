@@ -18,12 +18,20 @@ e_canvas.style.border = '2px solid green';
 const c2d_2d = e_canvas.getContext('2d', {webgl: false});
 const c2d_gl = e_canvas_gl.getContext('2d', {webgl: true});
 
+function zoom(canvas, mult) {
+   canvas.style.width = canvas.width * mult + 'px';
+   canvas.style.height = canvas.height * mult + 'px';
+}
+
 function draw(c2d) {
   c2d.canvas.width = 150;
-  c2d.canvas.height = 32; //20;
+  c2d.canvas.height = 100; //20;
+
+   zoom(c2d.canvas, 3);
+
   c2d.fillStyle = '#f0f';
   c2d.fillRect(10, 20, 30, 40);
-  //c2d.clearRect(0, 40, 150, -10);
+  c2d.clearRect(0, 40, 150, -10);
 
   //c2d.setTransform(1, .2, .8, 1, 0, 0);
   //c2d.fillRect(0, 0, 100, 100);
@@ -70,9 +78,115 @@ function draw(c2d) {
   if (1) {
     c2d.beginPath();
     c2d.rect(0, 0, 50, 50);
+    c2d.rotate(-15 / 360 * 2 * Math.PI);
     c2d.rect(25, 25, 50, 50);
     c2d.fillStyle = '#9099';
     c2d.fill();
+
+    c2d.resetTransform();
+    c2d.beginPath();
+    c2d.moveTo(0, 10);
+    c2d.lineTo(200, 40);
+    c2d.scale(2,1);
+    c2d.strokeStyle = '#ff0';
+    c2d.stroke();
+    c2d.resetTransform();
+
+    if (1) {
+       c2d.beginPath();
+       c2d.moveTo(0, 3);
+       c2d.scale(3, 3);
+       c2d.lineTo(50, 3);
+       c2d.scale(3, 3);
+       c2d.lineTo(100, 3);
+       c2d.strokeStyle = '#f00';
+       c2d.resetTransform();
+       c2d.scale(90, 1);
+       //c2d.scale(1, 10);
+       //c2d.translate(100, 100);
+       c2d.stroke();
+   }
+
+    if (0) {
+       c2d.resetTransform();
+       c2d.beginPath();
+       c2d.moveTo(0, 10);
+       c2d.scale(3, 3);
+       c2d.lineTo(30, 10);
+       c2d.strokeStyle = '#0ff';
+       c2d.resetTransform();
+       c2d.scale(100, 1);
+       c2d.stroke();
+   }
+   if (1) {
+    c2d.beginPath();
+    c2d.resetTransform();
+    c2d.moveTo(100, 8);
+    c2d.lineCap = 'round';
+    c2d.lineTo(116, 24);
+    c2d.moveTo(120, 8);
+    c2d.strokeStyle = '#00f';
+    c2d.lineCap = 'round';
+    c2d.lineTo(136, 14);
+    c2d.scale(8, 16);
+    c2d.stroke();
+   }
+
+/*
+    c2d.beginPath();
+    c2d.resetTransform();
+    c2d.moveTo(100, 8);
+    c2d.lineTo(116, 24);
+    c2d.scale(1, 1);
+    c2d.strokeStyle = '#0ff';
+    c2d.stroke();
+*/
+    if (0) {
+       c2d.lineCap = 'square';
+       c2d.resetTransform();
+       c2d.beginPath();
+       c2d.moveTo(0, 10);
+       c2d.scale(3, 3);
+       c2d.lineTo(30, 10);
+       c2d.strokeStyle = '#0f0';
+       c2d.resetTransform();
+       c2d.scale(100, 1);
+       c2d.stroke();
+   }
+
+    if (1) {
+       c2d.lineWidth = 5;
+       c2d.resetTransform();
+       c2d.beginPath();
+       c2d.moveTo(20, 20);
+       c2d.scale(3, 3);
+       c2d.lineTo(30, 30);
+       c2d.resetTransform();
+       c2d.scale(3, 3);
+       c2d.strokeStyle = '#555';
+       c2d.lineCap = 'square';
+       c2d.stroke();
+       c2d.strokeStyle = '#888';
+       c2d.lineCap = 'butt';
+       c2d.stroke();
+   }
+    if (1) {
+       c2d.lineWidth = 5;
+       c2d.resetTransform();
+       c2d.beginPath();
+       c2d.moveTo(20, 20);
+       c2d.scale(3, 3);
+       c2d.lineTo(30, 30);
+       c2d.resetTransform();
+       c2d.scale(3, 1);
+       //c2d.scale(1, 3);
+       c2d.strokeStyle = '#999';
+       c2d.lineCap = 'square';
+       c2d.stroke();
+       c2d.strokeStyle = '#ccc';
+       c2d.lineCap = 'butt';
+       c2d.stroke();
+   }
   }
 }
 draw(c2d_2d);

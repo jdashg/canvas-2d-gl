@@ -26,89 +26,13 @@
 
    // -
 
-   function vec_dot(a, b) {
-      var ret = 0;
-      if (a.length !== b.length) throw new Error(`${a.length} !== ${b.length}`);
-      for (var i = 0; i < a.length; i++) {
-         ret += a[i]*b[i];
-      }
-      return ret;
-   }
-
-   function mat_row(m, row) {
-      return m[row];
-   }
-
-   function mat_col(m, col) {
-      let ret = [];
-      for (var i = 0; i < m.length; i++) {
-         ret.push(m[i][col]);
-      }
-      return ret;
-   }
-
-   function mat_mul(a, b) {
-      const ret = [];
-      for (let y = 0; y < a.length; y++) {
-         const row = [];
-         for (let x = 0; x < b[0].length; x++) {
-            const val = vec_dot(mat_row(a, y), mat_col(b, x));
-            row.push(val);
-         }
-         ret.push(row);
-      }
-      return ret;
-   }
-
-   function mat_mul_vec(a, b) {
-      b = [b];
-      b = mat_trans(b);
-      return mat_mul(a, b);
-   }
-
-   function mat_string(m, precision) {
-      precision = precision || 5;
-      const rows = [];
-      for (let i = 0; i < m.length; i++) {
-         if (m[i].length !== m[0].length) throw new Error(`${m[i].length} !== ${m[0].length}`);
-         const row = mat_row(m, i);
-         const format = function(x) {
-            let str = x.toFixed(precision);
-            if (str[0] != '-')
-               str = ' ' + str;
-            return str;
-         };
-         const row_strs = row.map(format);
-         const row_str = row_strs.join(',');
-         rows.push(row_str);
-      }
-      const rows_str = '[' + rows.join(',\n ') + ' ]';
-      return rows_str;
-   }
-
-   function mat_trans(m) {
-      const n = m[0].length;
-      const ret = [];
-      for (let i = 0; i < n; i++) {
-         ret.push(mat_col(m, i));
-      }
-      return ret;
-   }
-
-   function mat_ident(m_rows, n_cols) {
-      n_cols = n_cols || m_rows;
-
-      const ret = [];
-      for (let y = 0; y < m_rows; y++) {
-         const row = [];
-         for (let x = 0; x < n_cols; x++) {
-            let val = 0;
-            if (x == y) {
-               val = 1;
-            }
-            row.push(val);
-         }
-         ret.push(row);
+   function array_equals(a, b) {
+      if (a === b) return true;
+      if (!a || !b) return false;
+      if (a.length != b.length) return false;
+      let ret = true;
+      for (const i in a) {
+         ret &= a[i] == b[i];
       }
       return ret;
    }
@@ -121,6 +45,219 @@
       elem.height = h;
       return elem.getContext('2d', {webgl:false});
    }
+
+   // -
+
+   function is_any_inf_or_nan() {
+      let any = false;
+      for (const x of arguments) {
+         any |= !isFinite(x) || isNaN(x);
+      }
+      return any;
+   }
+
+   class Path2DGL extends Path2D {
+      _lines = [];
+      _rects = true;
+      _joins = false;
+      _subpath_begin = null;
+      _subpath_cur = null;
+
+      constructor(src_path) {
+         super(...arguments);
+         console.error('FYI new Path2DGL');
+
+         if (!src_path) return;
+         this.addPath(src_path);
+      }
+
+      addPath(path, transform) {
+         super.addPath(...arguments);
+
+         transform = new DOMMatrix(transform);
+
+         this._rects = path._rects;
+         this._joins = path._joins;
+         if (path._lines == null) {
+            this._lines = null;
+            return;
+         }
+
+         for (const p of path._lines) {
+            this._lines.push(transform.transformPoint(p));
+         }
+         if (path._subpath_begin) {
+            this._subpath_begin = transform.transformPoint(path._subpath_begin);
+         }
+         if (path._subpath_cur) {
+            this._subpath_cur = transform.transformPoint(path._subpath_cur);
+         }
+      }
+
+      // -
+
+      _rect_data() {
+         const lines = this._lines;
+         if (lines == null) return null;
+         if (!this._rects) return null;
+
+         // TRIANGLE_STRIP order
+
+         const ret = new Float32Array(2 * lines.length / 2);
+         for (let i = 0; i < lines.length; i += 8) {
+            ret[i+0] = lines[i+0].x; // (x, y)
+            ret[i+1] = lines[i+0].y;
+
+            ret[i+2] = lines[i+2].x; // (x+w, y)
+            ret[i+3] = lines[i+2].y;
+
+            ret[i+4] = lines[i+6].x; // (x, y+h)
+            ret[i+5] = lines[i+6].y;
+
+            ret[i+6] = lines[i+4].x; // (x+w, y+h)
+            ret[i+7] = lines[i+4].y;
+         }
+         return ret;
+      }
+
+      _line_data() {
+         const lines = this._lines;
+         if (lines == null) return null;
+
+         const ret = new Float32Array(2 * lines.length);
+         for (let i = 0; i < lines.length; i += 1) {
+            ret[2*i+0] = lines[i].x;
+            ret[2*i+1] = lines[i].y;
+         }
+         ret._only_right_angles = this._rect;
+         ret._joins = this._joins;
+         return ret;
+      }
+
+      // -
+
+      moveTo() {
+         super.moveTo(...arguments);
+         if (this._lines == null) return;
+
+         this._rects = false;
+         this._moveTo(...arguments);
+      }
+
+      lineTo() {
+         super.lineTo(...arguments);
+         if (this._lines == null) return;
+
+         this._rects = false;
+         this._lineTo(...arguments);
+      }
+
+      // -
+
+      _moveTo(x, y, transform) {
+         if (!this._lines) throw 1;
+
+         // 1. If either of the arguments are infinite or NaN, then return.
+         if (is_any_inf_or_nan(x, y)) return;
+
+         // 2. Create a new subpath with the specified point as its first (and only) point.
+         let p = new DOMPoint(x, y);
+         if (transform) {
+            p = transform.transformPoint(p);
+         }
+         this._subpath_begin = this._subpath_cur = p;
+      }
+
+      _lineTo(x, y, transform) {
+         if (!this._lines) throw 1;
+
+         // 1. If either of the arguments are infinite or NaN, then return.
+         if (is_any_inf_or_nan(x, y)) return;
+
+         // 2. If the object's path has no subpaths, then ensure there is a subpath for (x, y).
+         if (!this._subpath_cur) {
+            this._moveTo(x, y, transform);
+            return;
+         }
+
+         // 3. Otherwise, connect the last point in the subpath to the given point (x, y) using
+         //    a straight line, and then add the given point (x, y) to the subpath.
+         this._joins |= (this._subpath_cur != this._subpath_begin);
+         let p = new DOMPoint(x, y);
+         if (transform) {
+            p = transform.transformPoint(p);
+         }
+         const lines = this._lines;
+         lines.push(this._subpath_cur);
+         lines.push(p);
+         this._subpath_cur = p;
+      }
+
+      // -
+
+      rect(x, y, w, h, transform) {
+         super.rect(x, y, w, h);
+         if (this._lines == null) return;
+
+         // 1. If any of the arguments are infinite or NaN, then return.
+         if (is_any_inf_or_nan(x, y, w, h)) return;
+
+         // 2. Create a new subpath containing just the four points (x, y), (x+w, y),
+         //    (x+w, y+h), (x, y+h), in that order, with those four points connected by
+         //    straight lines.
+         this._moveTo(x, y, transform);
+         this._lineTo(x+w, y, transform);
+         this._lineTo(x+w, y+h, transform);
+         this._lineTo(x, y+h, transform);
+
+         // 3. Mark the subpath as closed.
+         // 4. Create a new subpath with the point (x, y) as the only point in the subpath.
+         this._lineTo(x, y, transform);
+
+         this._moveTo(x, y, transform);
+      }
+
+      // -
+
+      // The closePath() method, when invoked, must do nothing if the object's path has no
+      // subpaths. Otherwise, it must mark the last subpath as closed, create a new subpath
+      // whose first point is the same as the previous subpath's first point, and finally add
+      // this new subpath to the path.
+      closePath() {
+         super.closePath(...arguments);
+         if (this._lines == null) return;
+
+         const begin = this._subpath_begin;
+         if (!begin) return;
+
+         this._line_to(begin.x, begin.y);
+         this._move_to(begin.x, begin.y);
+      }
+
+      // -
+
+      quadraticCurveTo(cpx, cpy, x, y) {
+         super.quadraticCurveTo(...arguments);
+         this._lines = null;
+      }
+      bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
+         super.bezierCurveTo(...arguments);
+         this._lines = null;
+      }
+      arcTo(x1, y1, x2, y2, radius) {
+         super.arcTo(...arguments);
+         this._lines = null;
+      }
+      arc(x, y, radius, start_angle, end_angle, anticlockwise) {
+         super.arc(...arguments);
+         this._lines = null;
+      }
+      ellipse(x, y, radius_x, radius_y, rotation, start_angle, end_angle, anticlockwise) {
+         super.ellipse(...arguments);
+         this._lines = null;
+      }
+   };
+   window.Path2D = Path2DGL;
 
    // -
    /*
@@ -333,7 +470,7 @@
       return arr;
    }
 
-   const DRAW_STATE = {
+   const INITIAL_DRAW_STATE = {
       fillStyle               : '#000',
       font                    : '10px sans-serif',
       globalAlpha             : 1.0,
@@ -355,8 +492,6 @@
       _line_dash              : [],
    };
 
-   const DEFAULT_TRANSFORM = mat_ident(2, 3);
-
    class CanvasRenderingContextGL2D {
       constructor(gl) {
          const c2d_canvas = document.createElement('canvas');
@@ -370,7 +505,7 @@
 
          const gl2d = this;
 
-         for (const k in DRAW_STATE) {
+         for (const k in INITIAL_DRAW_STATE) {
             if (k[0] == '_')
                continue;
             Object.defineProperty(this, k, {
@@ -389,15 +524,15 @@
          // -
 
          const BLIT_VS = `
-attribute vec2 a_vert;
+attribute vec2 a_box01;
 uniform vec4 u_dest_rect;
 uniform vec4 u_tex_rect;
 varying vec2 v_tex_coord;
 
 void main() {
-   vec2 dest_pos = u_dest_rect.xy + a_vert * u_dest_rect.zw;
+   vec2 dest_pos = u_dest_rect.xy + a_box01 * u_dest_rect.zw;
    gl_Position = vec4(dest_pos * 2.0 - 1.0, 0.0, 1.0);
-   v_tex_coord = u_tex_rect.xy + a_vert * u_tex_rect.zw;
+   v_tex_coord = u_tex_rect.xy + a_box01 * u_tex_rect.zw;
 }`.trim();
          const BLIT_FS = `
 precision mediump float;
@@ -408,24 +543,31 @@ varying vec2 v_tex_coord;
 void main() {
     gl_FragColor = texture2D(u_tex, v_tex_coord);
 }`.trim();
-         this.blit_prog = linkProgramSources(gl, BLIT_VS, BLIT_FS, ['a_vert']);
+         this.blit_prog = linkProgramSources(gl, BLIT_VS, BLIT_FS, ['a_box01']);
 
          // -
 
          const RECT_VS = `
-attribute vec2 a_box01;
-attribute vec4 a_dest_rect;
-uniform mat3 u_transform;
+attribute float a_vertex_id;
+attribute vec2 a_dest;
 uniform vec4 u_src_rect;
+uniform vec2 u_canvas_size;
 varying vec2 v_tex_coord;
 
+vec2 corner01_by_id(float vertex_id) {
+   float corner01x = mod(vertex_id, 2.0);
+   vec2 corner01 = vec2(corner01x, mod((vertex_id - corner01x) / 2.0, 2.0));
+   return corner01;
+}
+
 void main() {
-   vec2 dest2 = a_dest_rect.xy + a_box01 * a_dest_rect.zw;
-   vec3 dest3 = u_transform * vec3(dest2, 1);
-   gl_Position = vec4(dest3.xy * 2.0 - 1.0, 0.0, 1.0);
+   vec2 corner01 = corner01_by_id(a_vertex_id);
+
+   gl_Position = vec4(a_dest / u_canvas_size * 2.0 - 1.0, 0.0, 1.0);
+
    gl_Position.y *= -1.0;
 
-   v_tex_coord = u_src_rect.xy + a_box01 * u_src_rect.zw;
+   v_tex_coord = u_src_rect.xy + corner01 * u_src_rect.zw;
 }`.trim();
          const TEX_FS = `
 precision mediump float;
@@ -441,45 +583,70 @@ void main() {
     //gl_FragColor.a = 1.0;
 }`.trim();
          const LINE_VS = `
-attribute vec2 a_box01;
+attribute float a_vertex_id;
 attribute vec4 a_xy0xy1;
 uniform mediump vec4 u_line_info;
+uniform vec2 u_canvas_size;
 uniform mat3 u_transform;
 varying vec2 v_line_coord;
 varying float v_line_height;
 
+vec2 corner01_by_id(float vertex_id) {
+   float corner01x = mod(vertex_id, 2.0);
+   vec2 corner01 = vec2(corner01x, mod((vertex_id - corner01x) / 2.0, 2.0));
+   return corner01;
+}
+
 void main() {
+   vec2 corner01 = corner01_by_id(a_vertex_id);
+
    float u_line_width = u_line_info.x;
    int u_line_cap = int(u_line_info.y);
 
-   float half_w_len = u_line_width / 2.0;
+   float half_width = u_line_width / 2.0; // u_line_width: 4 => [-2, 2]
 
-   vec2 r = a_xy0xy1.xy;
-   vec2 s = a_xy0xy1.zw;
-   vec2 h = s - r;
+
+   vec2 p0 = a_xy0xy1.xy;
+   vec2 p1 = a_xy0xy1.zw;
+   vec2 h = p1 - p0;
    float h_len = length(h);
    vec2 h_dir = h / h_len;
    vec2 w_dir = cross(vec3(h_dir, 0), vec3(0, 0, 1)).xy;
+   vec2 w = w_dir * u_line_width;
 
-   float cap_len = 0.0;
-   if (u_line_cap != 0) {
-      cap_len = half_w_len;
+   float combined_cap_size = 0.0;
+   if (u_line_cap != 0) { // if not butt
+      combined_cap_size = u_line_width; // then square or round
    }
-   float capped_h_len = h_len + 2.0 * cap_len;
-   r -= w_dir * half_w_len;
-   r -= h_dir * cap_len;
 
-   // Col-major: [ w.x , cap_h.x, r.x ]
-   //            [ w.y , cap_h.y, r.y ]
-   mat3 xy_from_wh = mat3(vec3(w_dir*u_line_width, 0), vec3(h_dir*capped_h_len, 0), vec3(r, 1));
+   vec2 cap_w = (u_transform * vec3(w_dir * u_line_width, 0.0)).xy;
+   //cap_w = w_dir * dot(w_dir, cap_w);
+   vec2 combined_cap_h = (u_transform * vec3(h_dir * combined_cap_size, 0.0)).xy;
 
-   vec3 xy_pos = xy_from_wh * vec3(a_box01, 1);
+   vec2 cap_size = cap_w + combined_cap_h;
 
-   xy_pos = u_transform * xy_pos;
-   gl_Position = vec4(xy_pos.xy * 2.0 - 1.0, 0.0, 1.0);
+   vec2 cap_h = h_dir * dot(h_dir, combined_cap_h);
+
+   p0 -= (cap_w+cap_h) * 0.5;
+   //p1 += cap_size * 0.5;
+
+   vec2 capped_h = h_dir * (h_len + dot(h_dir, combined_cap_h));
+
+   // Col-major: [ w.x , capped_h.x, p0.x ]   [ corner.x ]
+   //            [ w.y , capped_h.y, p0.y ] x [ corner.y ]
+   //            [   0 ,          0,    1 ]   [        1 ]
+   mat3 xy_from_wh = mat3(vec3(cap_w, 0), vec3(capped_h, 0), vec3(p0, 1));
+
+
+   vec3 xy_pos = xy_from_wh * vec3(corner01, 1);
+
+   //xy_pos = u_transform * vec3(xy_pos.xy, 0.0);
+
+   gl_Position = vec4(xy_pos.xy / u_canvas_size * 2.0 - 1.0, 0.0, 1.0);
    gl_Position.y *= -1.0;
 
-   v_line_coord = vec2(-half_w_len, -cap_len) + a_box01 * vec2(u_line_width, capped_h_len);
+   v_line_coord = vec2(-0.5*u_line_width, -combined_cap_size*0.5) +
+                  corner01 * vec2(u_line_width, h_len + combined_cap_size);
    v_line_height = h_len;
 }`.trim();
          const LINE_FS = `
@@ -515,11 +682,13 @@ void main() {
    }
 
    float solidness = max(0.0, 1.0 - dist_to_solid);
-   if (solidness <= 0.0) discard;
+   solidness = max(0.1, 1.0 - dist_to_solid);
+   gl_FragColor = vec4(0, 1, 0, 1);
+   //if (solidness <= 0.0) discard;
    gl_FragColor = u_color * solidness;
 }`.trim();
-         this.rect_prog = linkProgramSources(gl, RECT_VS, TEX_FS, ['a_box01', 'a_dest_rect']);
-         this.line_prog = linkProgramSources(gl, LINE_VS, LINE_FS, ['a_box01', 'a_xy0xy1']);
+         this.rect_prog = linkProgramSources(gl, RECT_VS, TEX_FS, ['a_vertex_id', 'a_dest']);
+         this.line_prog = linkProgramSources(gl, LINE_VS, LINE_FS, ['a_vertex_id', 'a_xy0xy1']);
 
          this._white_tex = create_nomip_texture(gl);
          gl.texImage2D(GL.TEXTURE_2D, 0, GL.RGBA, 1, 1, 0, GL.RGBA, GL.UNSIGNED_BYTE,
@@ -532,46 +701,94 @@ void main() {
 
          // -
 
-         const vao_ext = gl.getExtension('OES_vertex_array_object');
-         gl.createVertexArray = function() { return vao_ext.createVertexArrayOES(); };
-         gl.bindVertexArray = function(vao) { return vao_ext.bindVertexArrayOES(vao); };
+         {
+            const ext = gl.getExtension('OES_vertex_array_object');
+            gl.createVertexArray = function() { return ext.createVertexArrayOES(...arguments); };
+            gl.bindVertexArray = function() { return ext.bindVertexArrayOES(...arguments); };
+         }
+         {
+            const ext = gl.getExtension('ANGLE_instanced_arrays');
+            gl.drawArraysInstanced = function() { ext.drawArraysInstancedANGLE(...arguments); };
+            gl.vertexAttribDivisor = function() { ext.vertexAttribDivisorANGLE(...arguments); };
+         }
 
-         this.blit_vao = gl.createVertexArray();
-         gl.bindVertexArray(this.blit_vao);
+         // -
 
-         const vertData = [
+         const box01_data = [
              0, 0,
              1, 0,
              0, 1,
              1, 1,
          ];
-         const vbo = gl.createBuffer();
-         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertData), gl.STATIC_DRAW);
+         this._vertex_id_vbo = gl.createBuffer();
+         gl.bindBuffer(gl.ARRAY_BUFFER, this._vertex_id_vbo);
+         this._ensure_vertex_id(4);
 
-         const instancing_ext = gl.getExtension('ANGLE_instanced_arrays');
-         gl.drawArraysInstanced = function(...args) {
-            instancing_ext.drawArraysInstancedANGLE(...args);
-         };
-
+         // -
+         this.blit_prog.name = 'blit_prog';
+         this.blit_prog.vao = gl.createVertexArray();
+         gl.bindVertexArray(this.blit_prog.vao);
          gl.enableVertexAttribArray(0);
-         gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+         gl.vertexAttribPointer(0, 1, gl.UNSIGNED_SHORT, false, 0, 0);
 
+         this.rect_prog.name = 'rect_prog';
+         this.rect_prog.vao = gl.createVertexArray();
+         gl.bindVertexArray(this.rect_prog.vao);
+         gl.enableVertexAttribArray(0);
+         gl.vertexAttribPointer(0, 1, gl.UNSIGNED_SHORT, false, 0, 0);
          gl.enableVertexAttribArray(1);
-         instancing_ext.vertexAttribDivisorANGLE(1, 1);
+         //gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
 
-         //gl.bindVertexArray(null);
+         this.line_prog.name = 'line_prog';
+         this.line_prog.vao = gl.createVertexArray();
+         gl.bindVertexArray(this.line_prog.vao);
+         gl.enableVertexAttribArray(0);
+         gl.vertexAttribPointer(0, 1, gl.UNSIGNED_SHORT, false, 0, 0);
+         gl.enableVertexAttribArray(1);
+         gl.vertexAttribDivisor(1, 1);
+         //gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+         gl.bindVertexArray(null);
       }
 
-      _ensure_prog_transform(prog, transform) {
+      _ensure_vertex_id(vert_count) {
          const gl = this.gl;
+
+         if (vert_count > 0xffff) throw 'Too many verts per batch.';
+         const vbo = this._vertex_id_vbo;
+         if (vert_count <= vbo.max_verts) return;
+
+         const data = new Uint16Array(vert_count);
+         for (const i in data) {
+            data[i] = i;
+         }
+
+         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+         gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+         vbo.max_verts = data.length;
+      }
+
+      _set_prog(prog, transform) {
          transform = transform || this._state._transform;
-         if (transform === undefined) throw new Error('`transform` required.');
-         if (prog.last_transform === transform) return;
-         prog.last_transform = transform;
-         const mat3 = this._gl_transform(transform);
-         //console.log('_ensure_prog_transform: mat3:', mat3);
-         gl.uniformMatrix3fv(prog.u_transform, false, mat3);
+         console.log(`_set_prog(${prog.name},`, transform, ')');
+         const gl = this.gl;
+
+         gl.useProgram(prog);
+         gl.bindVertexArray(prog.vao);
+
+         if (prog.u_transform && prog.last_transform !== transform) {
+            prog.last_transform = transform;
+            const mat3 = this._gl_transform(transform);
+            console.log('uniformMatrix3fv(u_transform', mat3, ')');
+            gl.uniformMatrix3fv(prog.u_transform, false, mat3);
+         }
+
+         const canvas_size = [this.canvas.width, this.canvas.height];
+         if (prog.u_canvas_size && !array_equals(prog.last_canvas_size, canvas_size)) {
+            prog.last_canvas_size = canvas_size;
+            console.log('uniform2f(u_canvas_size', ...canvas_size, ')');
+            gl.uniform2f(prog.u_canvas_size, ...canvas_size);
+         }
       }
 
       get canvas() {
@@ -589,7 +806,8 @@ void main() {
          this._clear_for_copy();
 
          this._state_stack = [];
-         this._state = Object.assign({}, DRAW_STATE);
+         this._state = Object.assign({}, INITIAL_DRAW_STATE);
+         this.resetTransform();
       }
 
       _clear_for_copy() {
@@ -608,6 +826,7 @@ void main() {
       save() {
          this._state_stack.push(this._state);
          this._state = Object.assign({}, this._state);
+         this._state._transform = new DOMMatrix(this._state._transform);
       }
 
       restore() {
@@ -618,41 +837,55 @@ void main() {
 
       // -
 
+      resetTransform() {
+         this._state._transform = new DOMMatrix();
+      }
       transform(a, b, c, d, e, f) {
-         let cur = this._state._transform;
-         if (!cur) {
-            cur = mat_ident(2, 3);
-         }
-         const m = [[a, c, e],
-                    [b, d, f],
-                    [0, 0, 1]];
-         this._state._transform = mat_mul(cur, m);
+         const m = new DOMMatrix([a, b, c, d, e, f]);
+         this._state._transform = this._state._transform.multiply(m);
       }
 
       getTransform() {
-         let cur = this._state._transform;
-         if (!cur) {
-            cur = mat_ident(2, 3);
-         }
-         return new DOMMatrix([cur[0][0], cur[0][1], 0, cur[0][2],
-                               cur[1][0], cur[1][1], 0, cur[1][2],
-                               0, 0, 1, 0,
-                               0, 0, 0, 1]);
+         return new DOMMatrix(this._state._transform);
       }
-      setTransform(a, b, c, d, e, f) {
-         this._state._transform = null;
-         this.transform(a, b, c, d, e, f);
+      setTransform() {
+         this.resetTransform();
+         this.transform(...arguments);
       }
+
       rotate(cw_rads) {
-         const sin = Math.sin(-cw_rads)
-         const cos = Math.cos(-cw_rads);
-         this.transform(cos,sin, -sin,cos, 0,0);
+         //const sin = Math.sin(-cw_rads)
+         //const cos = Math.cos(-cw_rads);
+         //this.transform(cos,sin, -sin,cos, 0,0);
+         const deg = cw_rads / 2 / Math.PI * 360;
+         this._state._transform = this._state._transform.rotate(deg);
       }
       scale(x, y) {
-         this.transform(x,0, 0,y, 0,0);
+         //this.transform(x,0, 0,y, 0,0);
+         this._state._transform = this._state._transform.scale(x, y);
       }
       translate(x, y) {
-         this.transform(1,0, 0,1, x,y);
+         //this.transform(1,0, 0,1, x,y);
+         this._state._transform = this._state._transform.translate(x, y);
+      }
+
+      // -
+
+      _gl_transform(m) {
+         m = m || this._state._transform;
+
+         const ret = new Float32Array([ // Column-major! (along the columns first)
+            m.a,
+            m.b,
+            0,
+            m.c,
+            m.d,
+            0,
+            m.e,
+            m.f,
+            1,
+         ]);
+         return ret;
       }
 
       // -
@@ -662,32 +895,6 @@ void main() {
       }
       getLineDash() {
          return this._state._line_dash.slice();
-      }
-
-      _gl_transform(rows) {
-         if (rows === undefined) {
-            rows = this._state._transform;
-         }
-         if (!rows) {
-            rows = DEFAULT_TRANSFORM;
-         }
-         const kx = 1/this.canvas.width;
-         const ky = 1/this.canvas.height;
-         const scale_mat = [[kx, 0],
-                            [0, ky]];
-         const scaled_rows = mat_mul(scale_mat, rows);
-
-         const ret = new Float32Array(9);
-         ret[0] = scaled_rows[0][0];
-         ret[1] = scaled_rows[1][0];
-         ret[2] = 0;
-         ret[3] = scaled_rows[0][1];
-         ret[4] = scaled_rows[1][1];
-         ret[5] = 0;
-         ret[6] = scaled_rows[0][2];
-         ret[7] = scaled_rows[1][2];
-         ret[8] = 1;
-         return ret;
       }
 
       // -
@@ -710,74 +917,78 @@ void main() {
 
       // -
 
-      _default_path = [];
+      _default_path = new Path2D();
 
       beginPath() {
-         this._default_path = [];
-      }
-
-      _path_add(func, args) {
-         this._default_path.push({
-            func: func,
-            args: [].slice.call(args),
-            transform: this._state._transform,
-         });
+         this._default_path = new Path2D();
       }
 
       // -
 
-      arc() {
-         this._path_add('arc', arguments);
-      }
-      arcTo() {
-         this._path_add('arcTo', arguments);
-      }
-      bezierCurveTo() {
-         this._path_add('bezierCurveTo', arguments);
-      }
-      closePath() {
-         this._path_add('closePath', arguments);
-      }
-      ellipse() {
-         this._path_add('ellipse', arguments);
-      }
       lineTo() {
-         this._path_add('lineTo', arguments);
+         this._default_path.lineTo(...arguments, this._state._transform);
       }
       moveTo() {
-         this._path_add('moveTo', arguments);
-      }
-      quadraticCurveTo() {
-         this._path_add('quadraticCurveTo', arguments);
+         this._default_path.moveTo(...arguments, this._state._transform);
       }
       rect() {
-         this._path_add('rect', arguments);
+         this._default_path.rect(...arguments, this._state._transform);
+      }
+
+      arc() {
+         this._default_path.arc(...arguments);
+      }
+      arcTo() {
+         this._default_path.arcTo(...arguments);
+      }
+      bezierCurveTo() {
+         this._default_path.bezierCurveTo(...arguments);
+      }
+      ellipse() {
+         this._default_path.ellipse(...arguments);
+      }
+      quadraticCurveTo() {
+         this._default_path.quadraticCurveTo(...arguments);
+      }
+      closePath() {
+         this._default_path.closePath(...arguments);
+      }
+      quadraticCurveTo() {
+         this._default_path.quadraticCurveTo(...arguments);
+      }
+      quadraticCurveTo() {
+         this._default_path.quadraticCurveTo(...arguments);
+      }
+      quadraticCurveTo() {
+         this._default_path.quadraticCurveTo(...arguments);
       }
 
       // -
 
-      _path_float_buf = new Float32Array(1000);
-
-      _path_float_buf_push(arr) {
-         let buf = this._path_float_buf;
-         const pos = buf.pos;
-         const end = pos + arr.length;
-         if (end > buf.length) {
-            const old = buf;
-            buf = this._path_float_buf = new Float32Array(old.length * 2);
-            buf.set(old);
+      fill(a1, a2) {
+         let fill_rule, path;
+         if (a2 === undefined) {
+            path = this._default_path;
+            fill_rule = a1;
+         } else {
+            path = a1;
+            fill_rule = a2;
          }
-         buf.set(arr, pos);
-         buf.pos = end;
+
+         fill_rule = fill_rule || 'nonzero';
+
+         // -
+
+         if (fill_rule == 'nonzero') {
+            if (this._fill_fast()) return;
+         }
+         console.error('unimplemented');
       }
 
-      // -
-
-      fill() {
-         if (this._fill_fast()) return;
-      }
-      stroke() {
-         if (this._stroke_fast()) return;
+      stroke(path) {
+         path = path || this._default_path;
+         if (this._stroke_fast(path)) return;
+         console.error('unimplemented');
       }
 
       // -
@@ -792,35 +1003,14 @@ void main() {
 
       _fill_fast() {
          const cur_path = this._default_path;
-         if (!cur_path.length) return true; // Ok, sure!
-
-         this._path_float_buf.pos = 0;
-
-         const common_transform = cur_path[0].transform;
-         for (const cur of cur_path) {
-            if (cur.transform !== common_transform) {
-               console.log(`Can't fast-path with dynamic transform.`);
-               return false;
-            }
-
-            if (cur.func === 'rect') {
-               if (cur.args.length != 4) throw new Error(`Arg count must be 4: ${cur.args}`);
-               this._path_float_buf_push(cur.args);
-               continue;
-            }
-
-            console.log(`Can't fast-path ${cur.func}().`);
-            return false;
-         }
-         const buf_end = this._path_float_buf.pos;
-         const sub_buf = this._path_float_buf.subarray(0, buf_end);
+         const rect_data = cur_path._rect_data();
+         if (!rect_data) return false;
 
          // -
 
          const gl = this.gl;
          const prog = this.rect_prog;
-         gl.useProgram(prog);
-         this._ensure_prog_transform(prog, common_transform);
+         this._set_prog(prog);
          this._ensure_blend_op();
 
          const c2d = this.c2d;
@@ -841,24 +1031,23 @@ void main() {
          gl.clear(gl.DEPTH_BUFFER_BIT);
          gl.enable(gl.DEPTH_TEST);
 
-         this._draw_rects(sub_buf);
+         {
+            const vbo = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+            gl.bufferData(gl.ARRAY_BUFFER, rect_data, gl.STREAM_DRAW);
+            gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
+
+            const vert_count = rect_data.length / 2;
+            this._ensure_vertex_id(vert_count);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, vert_count);
+
+            gl.deleteBuffer(vbo);
+         }
 
          gl.clear(gl.DEPTH_BUFFER_BIT);
          gl.disable(gl.DEPTH_TEST);
+         return true;
       }
-
-      _draw_rects(rect_view) {
-         const gl = this.gl;
-         const vbo = gl.createBuffer();
-         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-         gl.bufferData(gl.ARRAY_BUFFER, rect_view, gl.STREAM_DRAW);
-         gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
-
-         const quad_count = rect_view.length / 4;
-         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, quad_count);
-         gl.deleteBuffer(vbo);
-      }
-
 
       // -
 
@@ -916,90 +1105,36 @@ void main() {
 
       _stroke_fast() {
          const cur_path = this._default_path;
-         if (!cur_path.length) return; // Ok, sure!
+         const line_data = cur_path._line_data();
+         if (!line_data) return false;
 
-         this._path_float_buf.pos = 0;
+         // -
 
-         const common_transform = cur_path[0].transform;
-         let fast = true;
-         const path_pos = {
-            x: 0,
-            y: 0,
-         };
-
-         let needs_join = false;
-         function move_to(x, y) {
-            path_pos.x = x;
-            path_pos.y = y;
-            needs_join = false;
+         if (line_data._joins) {
+            const line_cap = this.lineCap;
+            const line_join = this.lineJoin;
+            let can_join = (line_cap == "round" && line_join == "round");
+            if (line_data._only_right_angles) {
+               can_join |= (line_cap == 'square' && line_join == 'miter');
+            }
+            if (!can_join) {
+               console.error(`Warning: Can't correctly join lines with lineCap:'${line_cap}', lineJoin:${line_join}':`, cur_path);
+               //return false;
+            }
          }
-
-         const root = this;
-         function line_to(x, y, right_angles) {
-            if (needs_join) {
-               let can_join = (root.lineCap == "round" && root.lineJoin == "round");
-               if (right_angles) {
-                  can_join |= root.lineJoin == 'miter';
-                  // Todo implement miter&&right_angles as lineCap:square.
-               }
-               if (!can_join) {
-                  console.log(`Can't join lines with lineCap:'${root.lineCap}', lineJoin:${root.lineJoin}'.`);
-                  return false;
-               }
-            }
-            root._path_float_buf_push([path_pos.x, path_pos.y, x, y]);
-            path_pos.x = x;
-            path_pos.y = y;
-            needs_join = true;
-            return true;
-         }
-
-         for (const cur of cur_path) {
-            if (cur.transform !== common_transform) {
-               console.log(`Can't fast-path with dynamic transform.`);
-               return false;
-            }
-
-            if (cur.func === 'moveTo') {
-               move_to(cur.args[0], cur.args[1]);
-               continue;
-            }
-            if (cur.func === 'lineTo') {
-               if (!line_to(cur.args[0], cur.args[1])) return false;
-               continue;
-            }
-            if (cur.func === 'rect') {
-               const [x, y, w, h] = cur.args;
-               move_to(x, y);
-               if (!line_to(x+w, y, true) ||
-                   !line_to(x+w, y+h, true) ||
-                   !line_to(x, y+h, true) ||
-                   !line_to(x, y, true)) {
-                  return false;
-               }
-               continue;
-            }
-
-            console.log(`Can't fast-path ${cur.func}().`);
-            return false;
-         }
-
-         const buf_end = this._path_float_buf.pos;
-         const sub_buf = this._path_float_buf.subarray(0, buf_end);
 
          // -
 
          const gl = this.gl;
          const prog = this.line_prog;
-         gl.useProgram(prog);
-         this._ensure_prog_transform(prog, common_transform);
+         this._set_prog(prog);
          this._ensure_blend_op();
 
          const dash_tex = this._tex_by_line_dash();
          gl.bindTexture(gl.TEXTURE_2D, dash_tex);
 
          const line_cap_mode = this._LINE_CAP_MODE_BY_STR[this.lineCap];
-         if (line_cap_mode === 'undefined') throw new Error(`Bad lineCap: ${this.lineCap}`);
+         if (line_cap_mode === undefined) throw new Error(`Bad lineCap: ${this.lineCap}`);
 
          gl.uniform4f(prog.u_line_info, this.lineWidth, line_cap_mode,
                       dash_tex.dash_length, this.lineDashOffset);
@@ -1014,10 +1149,68 @@ void main() {
          gl.clear(gl.DEPTH_BUFFER_BIT);
          gl.enable(gl.DEPTH_TEST);
 
-         this._draw_rects(sub_buf);
+         {
+            const vbo = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+            gl.bufferData(gl.ARRAY_BUFFER, line_data, gl.STREAM_DRAW);
+            gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+            const line_count = line_data.length / 4;
+            console.log('line_data', line_data);
+            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, line_count);
+
+            gl.deleteBuffer(vbo);
+         }
 
          gl.clear(gl.DEPTH_BUFFER_BIT);
          gl.disable(gl.DEPTH_TEST);
+
+         return true;
+      }
+
+
+      // -
+
+      clip(a1, a2) {
+         let fillRule, path;
+         if (a2 === undefined) {
+            path = this._default_path;
+            fillRule = a1;
+         } else {
+            path = a1;
+            fillRule = a2;
+         }
+
+         // -
+         // fill stencil plane
+
+         const gl = this.gl;
+
+         let stencil_op;
+         switch (fillRule) {
+         case 'evenodd':
+            stencil_op = gl.INVERT;
+            break;
+
+         case 'nonzero':
+         default:
+            stencil_op = gl.REPLACE;
+            break;
+         }
+
+         gl.clear(gl.STENCIL_BUFFER_BIT);
+         gl.colorMask(false, false, false, false);
+         gl.stencilFunc(gl.ALWAYS, 1, 0);
+         gl.stencilOp(stencil_op, stencil_op, stencil_op);
+
+         this.fill(path, 'nonzero');
+
+         // -
+         // set stencil func/op for rendering
+
+         gl.colorMask(true, true, true, true);
+         gl.stencilFunc(gl.EQUALS, 1, 1);
+         gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
       }
 
       // -
@@ -1355,12 +1548,26 @@ void main() {
          gl.bindTexture(GL.TEXTURE_2D, tex);
 
          this._ensure_blend_op();
-         this._ensure_prog_transform(prog);
+         this._set_prog(prog);
 
-         const rect_view = new Float32Array([
-            d_rect.x, d_rect.y, d_rect.w, d_rect.h,
-         ]);
-         this._draw_rects(rect_view);
+         // -
+
+         const path = new Path2D();
+         path.rect(x, y, w, h, this._state._transform);
+
+         const rect_data = path._rect_data();
+
+         // -
+
+         gl.bindVertexArray(prog.vao);
+         const vbo = gl.createBuffer();
+         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+         gl.bufferData(gl.ARRAY_BUFFER, rect_data, gl.STREAM_DRAW);
+         gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
+
+         gl.drawArrays(gl.TRIANGLE_STRIP, 0, rect_data.length / 2);
+
+         gl.deleteBuffer(vbo);
       }
    }
 
