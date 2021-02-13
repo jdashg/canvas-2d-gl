@@ -629,8 +629,18 @@ void main() {
    // On our reference implementation, both scale and rotate, but not translate, affect stroking.
    // We need to do *something* with the non-translate coeffs.
 
-   //vec2 w_t = (u_transform * vec3(w, 0.0)).xy;
+   vec2 w_t = w;
+   vec2 cap_h_t = h_dir * combined_cap_size;
+   w_t = (u_transform * vec3(w_t, 0.0)).xy;
+   cap_h_t = (u_transform * vec3(cap_h_t, 0.0)).xy;
+
    vec2 w_dir_t = (u_transform * vec3(w_dir, 0.0)).xy;
+
+   w_t = (u_transform * vec3(w_t, 0.0)).xy;
+
+
+
+
    vec2 h_dir_t = (u_transform * vec3(h_dir, 0.0)).xy;
    vec3 cc = cross(vec3(normalize(w_dir_t), 0.0), vec3(normalize(h_dir_t), 0.0));
    vec2 cap_h_t = combined_cap_size * h_dir * length(cc);
@@ -640,11 +650,12 @@ void main() {
    //cap_h_t = h_dir * dot(h_dir, cap_h_t);
 
    vec2 w_t = normalize(w_dir_t);
-   w_t = (u_transform * vec3(w_t, 0.0)).xy;
+   w_t = (u_transform * vec3(w_t, 0.0)).xy; // This looks correct, but the ext
 
    cap_h_t = h_dir * combined_cap_size * length(w_t) * length(cc);
 
-   w_t *= u_line_width;
+   w_t = normalize(w_t) * length(w_t) * u_line_width;
+   //w_t *= u_line_width;
 
    // -
 
