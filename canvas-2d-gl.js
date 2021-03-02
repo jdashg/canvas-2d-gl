@@ -65,7 +65,7 @@
 
       constructor(src_path) {
          super(...arguments);
-         console.error('FYI new Path2DGL');
+         //console.error('FYI new Path2DGL');
 
          if (!src_path) return;
          this.addPath(src_path);
@@ -640,7 +640,7 @@ void main() {
 
 
 
-
+/*
    vec2 h_dir_t = (u_transform * vec3(h_dir, 0.0)).xy;
    vec3 cc = cross(vec3(normalize(w_dir_t), 0.0), vec3(normalize(h_dir_t), 0.0));
    vec2 cap_h_t = combined_cap_size * h_dir * length(cc);
@@ -664,7 +664,7 @@ void main() {
 
    //vec2 cap_h = h_dir * dot(h_dir_t, h_dir);
    //vec2 cap_h = h_dir * combined_cap_size;
-
+*/
    vec2 cap_size_t = w_t + cap_h_t;
 
    p0 -= cap_size_t * 0.5;
@@ -805,7 +805,7 @@ void main() {
 
       _set_prog(prog, transform) {
          transform = transform || this._state._transform;
-         console.log(`_set_prog(${prog.name},`, transform, ')');
+         //console.log(`_set_prog(${prog.name},`, transform, ')');
          const gl = this.gl;
 
          gl.useProgram(prog);
@@ -1588,7 +1588,7 @@ void main() {
          // -
 
          const path = new Path2D();
-         path.rect(x, y, w, h, this._state._transform);
+         path.rect(d_rect.x, d_rect.y, d_rect.w, d_rect.h, this._state._transform);
 
          const rect_data = path._rect_data();
 
@@ -1614,6 +1614,7 @@ void main() {
       };
       options = options || default_options;
       if (type == '2d' && options.webgl) {
+         console.log('trying 2d w/ webgl:true');
          options = Object.assign({
             alpha: true,
             antialias: true,

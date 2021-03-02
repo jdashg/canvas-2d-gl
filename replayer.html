@@ -2,7 +2,7 @@
    <head>
       <meta charset='UTF-8'>
       <script src='../canvas-rr/rr-replay.js'></script>
-      <script src='gl-2d.js'></script>
+      <script src='canvas-2d-gl.js'></script>
    </head>
    <body>
 Recording: <input id='fileInput' type='file' accept='.json'
@@ -196,7 +196,7 @@ function stats(arr) {
 
 let last_raf;
 async function on_raf() {
-   await next_event_loop();
+   //await next_event_loop();
    requestAnimationFrame(on_raf);
 
    const start = performance.now();
